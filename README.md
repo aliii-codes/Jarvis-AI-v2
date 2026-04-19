@@ -1,95 +1,124 @@
-# Jarvis-AI-v2
 
-## Overview
-Jarvis-AI-v2 is an advanced AI assistant designed to handle a variety of tasks, including user authentication, automation, and conversational AI. The project is built with a focus on security, modularity, and real-time functionality.
+# 🚀 Jarvis-AI-v2
+**Your Ultimate AI-Powered Personal Assistant**
 
-## Features
-- **User Authentication**: Secure user profile management with password hashing and salting.
-- **Automation**: Execute system commands, open/close applications, search the web, and generate content.
-- **Conversational AI**: Real-time chatbot with internet knowledge and professional responses.
-- **Profile Management**: Create, update, and delete user profiles with customizable settings.
-- **Chat History**: Persistent chat logs for seamless conversation continuity.
+![Jarvis AI Banner](assets/banner.png)
 
-## Tech Stack
-- **Python**: Core programming language.
-- **Groq API**: For AI model inference.
-- **AppOpener**: For application control.
-- **pywhatkit**: For web searches and YouTube interactions.
-- **BeautifulSoup**: For web scraping.
-- **dotenv**: For environment variable management.
-- **hashlib**: For secure password hashing.
+## 📊 Shields.io Badges
 
-## Installation
-1. Clone the repository:
+[![GitHub Stars](https://img.shields.io/github/stars/yourusername/Jarvis-AI-v2?style=for-the-badge)](https://github.com/yourusername/Jarvis-AI-v2/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/yourusername/Jarvis-AI-v2?style=for-the-badge)](https://github.com/yourusername/Jarvis-AI-v2/network/members)
+[![GitHub Issues](https://img.shields.io/github/issues/yourusername/Jarvis-AI-v2?style=for-the-badge)](https://github.com/yourusername/Jarvis-AI-v2/issues)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
+
+[![Python](https://img.shields.io/badge/Python-3.9-blue?style=for-the-badge&logo=python)](https://www.python.org/)
+[![Groq](https://img.shields.io/badge/Groq-AI-brightgreen?style=for-the-badge&logo=groq)](https://groq.com/)
+[![Dotenv](https://img.shields.io/badge/Dotenv-2.0-brightgreen?style=for-the-badge&logo=dotenv)](https://github.com/theskumar/python-dotenv)
+
+## ✨ Highlights (v2.0)
+
+> **What's New?**  
+> 🎉 **Enhanced Security**: Robust password hashing and profile management.  
+> 🚀 **Asynchronous Automation**: Faster execution of multiple commands.  
+> 💬 **Persistent Chat History**: Save and load conversations seamlessly.  
+> 🌐 **Real-Time Information**: Integrated date/time and internet knowledge.  
+
+## 🛠️ Features
+
+| Feature               | Description                                                                 |
+|-----------------------|-----------------------------------------------------------------------------|
+| **User Authentication** | Secure profile creation, login, and password management.                   |
+| **AI-Powered Chatbot** | Real-time conversational AI with Groq's LLaMA models.                      |
+| **Automation Commands** | Execute tasks like opening apps, searching Google/YouTube, and more.       |
+| **Content Generation** | Generate letters, essays, code, and more with AI assistance.               |
+| **System Control**     | Adjust volume, mute/unmute, and manage system settings via voice.          |
+
+## 🖼️ Preview
+
+![Jarvis AI Demo](assets/demo.gif)
+
+## 💻 Tech Stack
+
+| Category        | Technologies                                                                 |
+|-----------------|------------------------------------------------------------------------------|
+| **Backend**     | Python, Groq API, Dotenv                                                    |
+| **Authentication** | Hashlib, Secrets                                                            |
+| **Automation**  | AppOpener, PyWhatKit, Keyboard                                              |
+| **Data Storage** | JSON (profiles, chat logs)                                                  |
+| **Dependencies** | `groq`, `python-dotenv`, `requests`, `beautifulsoup4`                       |
+
+## 🚀 Installation
+
+1. **Clone the Repository**  
    ```bash
    git clone https://github.com/aliii-codes/Jarvis-AI-v2.git
    cd Jarvis-AI-v2
    ```
-2. Install dependencies:
+
+2. **Create Virtual Environment**  
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
+
+3. **Install Dependencies**  
    ```bash
    pip install -r requirements.txt
    ```
-3. Set up environment variables in a `.env` file:
+
+4. **Set Up Environment Variables**  
+   Create a `.env` file in the root directory with:  
    ```env
    GroqAPIKey=your_groq_api_key
-   Username=your_username
-   Assistantname=your_assistant_name
    ```
 
-## Usage Examples
-### Authentication
-```python
-from Backend.Auth import create_profile, verify_login
+5. **Run the Project**  
+   ```bash
+   python Backend/main.py
+   ```
 
-# Create a new profile
-create_profile("john_doe", "securepassword", "Jarvis", "en-US-JennyNeural")
+## 🕹️ Usage
 
-# Verify login
-profile = verify_login("john_doe", "securepassword")
-print(profile)
-```
+| Command               | Description                                  |
+|-----------------------|----------------------------------------------|
+| `content <topic>`     | Generate content and open in Notepad.        |
+| `google search <query>` | Search Google for the query.                 |
+| `play <video>`        | Play a YouTube video.                        |
+| `open <app>`          | Open an application or website.              |
+| `system <command>`    | Control system settings (e.g., volume).      |
 
-### Automation
-```python
-import asyncio
-from Backend.Automation import Automation
+## 📁 Project Structure
 
-# Run automation commands
-asyncio.run(Automation([
-    "open chrome",
-    "google search latest AI trends",
-    "content Write a script for a YouTube video titled 'Negative effects of Social Media'"
-]))
-```
-
-### Chatbot
-```python
-from Backend.ChatBot import ChatBot
-
-# Interact with the chatbot
-response = ChatBot("What are the latest advancements in AI?")
-print(response)
-```
-
-## Project Structure
 ```
 Jarvis-AI-v2/
-│
 ├── Backend/
-│   ├── Auth.py
-│   ├── Automation.py
-│   └── ChatBot.py
-│
-├── Data/
-│   └── profiles.json
-│
-├── .env
-└── README.md
+│   ├── Auth.py          # User authentication logic
+│   ├── Automation.py    # Task automation functions
+│   ├── ChatBot.py       # AI chatbot implementation
+│   └── main.py          # Entry point
+├── Data/               # Storage for profiles and chat logs
+├── assets/             # Images and banners
+└── requirements.txt    # Project dependencies
 ```
 
-## License
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+## 🤝 Contributing
 
----
+1. Fork the repository.
+2. Create a new branch: `git checkout -b feature/your-feature-name`.
+3. Commit changes: `git commit -m "Add your feature"`.
+4. Push to the branch: `git push origin feature/your-feature-name`.
+5. Open a pull request.
 
-**Note:** Ensure you have the necessary API keys and dependencies installed before running the project. The `.env` file should be kept secure and not shared publicly.
+## 🐞 Bug Reports & Feature Requests
+
+Submit issues [here](https://github.com/yourusername/Jarvis-AI-v2/issues) using the provided templates.
+
+## 📜 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🎉 Acknowledgements
+
+- **Groq**: For providing powerful AI models.
+- **Open-Source Libraries**: `AppOpener`, `PyWhatKit`, `python-dotenv`, `requests`, `beautifulsoup4`.
+```
