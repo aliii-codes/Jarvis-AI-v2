@@ -91,7 +91,7 @@ python main.py
 ## 🕹️ Usage
 
 
-
+```
 | Command               | Description                                  |
 |-----------------------|----------------------------------------------|
 | `content <topic>`     | Generate content and open in Notepad.        |
