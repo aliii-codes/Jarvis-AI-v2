@@ -1,8 +1,5 @@
 # 🤖 Jarvis AI v2
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/aliii-codes/Jarvis-AI-v2/main/Frontend/Graphics/Jarvis.gif" alt="Jarvis AI Logo" width="200"/>
-</p>
 
 <p align="center">
   <b>The Evolution.</b> Faster. Smarter. Unchained.
