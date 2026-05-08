@@ -100,6 +100,7 @@ python main.py
 | `play <video>`        | Play a YouTube video.                        |
 | `open <app>`          | Open an application or website.              |
 | `system <command>`    | Control system settings (e.g., volume).      |
+```
 
 ## 📁 Project Structure
 
