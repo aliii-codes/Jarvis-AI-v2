@@ -87,6 +87,7 @@ echo "GROQ_API_KEY=your_groq_api_key_here" > .env
 
 # 5. Run Jarvis AI
 python main.py
+```
 
 ## 🕹️ Usage
 
