@@ -1,5 +1,4 @@
-# 🤖 Jarvis AI v2
-
+# ✨ AURA
 
 <p align="center">
   <b>The Evolution.</b> Faster. Smarter. Unchained.
@@ -13,141 +12,134 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Python-3.9+-blue?style=flat-square&logo=python&logoColor=white" alt="Python">
-  <img src="https://img.shields.io/badge/Groq-Whisper-FF4F00?style=flat-square&logo=groq&logoColor=white" alt="Groq Whisper">
-  <img src="https://img.shields.io/badge/UI-Tkinter-FF6F00?style=flat-square&logo=python&logoColor=white" alt="Tkinter">
-  <img src="https://img.shields.io/badge/Auth-JWT-black?style=flat-square&logo=jsonwebtokens&logoColor=white" alt="Auth">
-  <img src="https://img.shields.io/badge/Async-True-purple?style=flat-square&logo=python&logoColor=white" alt="Async">
+  <img src="https://img.shields.io/badge/Python-3.10+-blue?style=flat-square&logo=python&logoColor=white" alt="Python">
+  <img src="https://img.shields.io/badge/LangGraph-agent-1C3C3C?style=flat-square&logo=langchain&logoColor=white" alt="LangGraph">
+  <img src="https://img.shields.io/badge/LLM-Groq-FF4F00?style=flat-square&logo=groq&logoColor=white" alt="Groq">
+  <img src="https://img.shields.io/badge/UI-PyQt5-41CD52?style=flat-square&logo=qt&logoColor=white" alt="PyQt5">
 </p>
 
----
-
-## 🔥 What's New in v2?
-
-This isn't just an update. It's a **complete rewrite** from the ground up.
-
-- **⚡ Groq Whisper Integration** — Blazing-fast, ultra-accurate speech transcription.
-- **🛡️ Dual Speech Recognition** — Fallback to Web Speech API if Groq hiccups. Zero downtime.
-- **🧹 Selenium Purged** — Lighter, faster, no more ChromeDriver headaches.
-- **🔒 Secure Authentication** — User profiles, settings, and history protected.
-- **⚙️ True Multitasking** — Processes run in the **background** while you keep chatting.
-- **🎨 Modern UI** — Clean, responsive interface built with CustomTkinter.
+A desktop AI assistant: a clean chat window backed by a LangGraph tool-calling agent.
+Ask questions, get live answers from the web, and let it act on your computer.
 
 ---
 
-## ✨ Features
+## ✨ What it can do
 
-| Feature | Description |
-|---------|-------------|
-| 🎤 **Voice Commands** | Seamless voice interaction with Groq Whisper + Web Speech API fallback. |
-| 💬 **Text Chat** | Type commands for quiet, discrete interaction. |
-| 🌐 **Real-Time Web Search** | Fetch live information, news, and answers instantly. |
-| 🖼️ **AI Image Generation** | Create images from text prompts in the background. |
-| 🤖 **Automation** | Open apps, control system volume, play music, and more. |
-| 🔊 **Text-to-Speech** | Natural, high-quality voice responses. |
-| 🔐 **User Authentication** | Secure login system with profile management. |
-| ⚡ **Async Operations** | Long-running tasks never freeze the UI. |
+| | |
+|---|---|
+| 💬 **Chat** | Streaming answers with full Markdown, syntax-highlighted code (one-click copy), live tool-progress chips, and light/dark themes that follow your GNOME setting. |
+| 🌐 **Live web search** | Current news, prices, scores, anything recent (DuckDuckGo, no key needed). |
+| 📄 **Read pages & PDFs** | "Summarize this article: <url>" — fetches the page or PDF and reads it. |
+| 🌦️ **Weather** | Current conditions and today's forecast for any city (no key needed). |
+| 🖥️ **Apps & websites** | Open or close desktop apps, open websites. |
+| 🎵 **YouTube** | "play believer" finds the track and opens it. |
+| 🔊 **Volume** | Mute, unmute, up, down. |
+| 📝 **Writing** | Emails, letters, essays, code: written, saved and opened in your editor. |
+| 📋 **Clipboard** | "Translate what I copied", "copy that email to my clipboard". |
+| 📁 **Files** | Find, list and read files and PDFs in your home folder ("summarize ~/Downloads/report.pdf"). Access outside your home folder is refused. |
+| ⏰ **Reminders** | "Remind me in 20 minutes to stretch", "remind me tomorrow at 9:00 to call mum". Desktop notification when due; list and cancel them too. |
+| ⌨️ **Global hotkey** | Super+J shows/hides AURA from anywhere (starts it if it isn't running). |
+| 🟢 **Always on** | Starts hidden at login; closing the window keeps it running in the background (Ctrl+Q quits). |
+| ⚡ **Never stalls** | When a model hits Groq's rate limit, AURA switches to another model instantly; if all are busy it shows a countdown. Stop any reply with Esc or the stop button. |
+| 🖼️ **Images** | Text-to-image via Hugging Face (optional key). |
+| 🧠 **Memory** | Remembers you across chats: facts (where you study, people you mention, preferences, upcoming events) and a short note per day. Learns in the background after you chat, or when you say "remember…" / "forget…". A Memory panel (✦ in the header) lets you see, edit and delete everything, or turn learning off. Stored only on your computer. |
 
----
-
-## 💻 Tech Stack
-
-| Category | Technologies |
-|----------|--------------|
-| **Core Language** | Python 3.9+ |
-| **Speech-to-Text** | Groq Whisper + Web Speech API |
-| **LLM** | Groq API (Llama 3, Mixtral) |
-| **Text-to-Speech** | pyttsx3 |
-| **GUI** | Tkinter (CustomTkinter) |
-| **Authentication** | Custom Auth Module (hashlib, secrets) |
-| **Automation** | AppOpener, PyWhatKit, Keyboard |
-| **Concurrency** | asyncio, threading, subprocess |
+You don't use commands; just say what you want. The agent decides which tools to use, and can chain several in one request ("open firefox and tell me today's top tech story").
 
 ---
 
-## 🚀 Installation
+## 🚀 Setup
 
 ```bash
-# 1. Clone the repository
 git clone https://github.com/aliii-codes/Jarvis-AI-v2.git
 cd Jarvis-AI-v2
 
-# 2. Create and activate virtual environment
-python -m venv venv
-source venv/bin/activate       # On Windows: venv\Scripts\activate
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements.txt    # or: uv sync
 
-# 3. Install dependencies
-pip install -r requirements.txt
+cat > .env <<'EOF'
+GroqAPIKey=your_groq_api_key_here
+Username=YourName
+Assistantname=AURA
+# Optional:
+HuggingFaceAPIKey=
+# ChatModel=openai/gpt-oss-120b
+# FallbackModels=openai/gpt-oss-20b,qwen/qwen3.8-27b
+# SummaryModel=openai/gpt-oss-20b
+EOF
 
-# 4. Set up environment variables (create .env file)
-echo "GROQ_API_KEY=your_groq_api_key_here" > .env
-# Optional keys:
-# echo "REPLICATE_API_TOKEN=your_replicate_token_here" >> .env
-# echo "NEWS_API_KEY=your_news_api_key_here" >> .env
-
-# 5. Run Jarvis AI
 python main.py
 ```
 
-## 🕹️ Usage
+Get a free Groq key at [console.groq.com](https://console.groq.com).
 
+### 🟢 Start at login
 
-```
-| Command               | Description                                  |
-|-----------------------|----------------------------------------------|
-| `content <topic>`     | Generate content and open in Notepad.        |
-| `google search <query>` | Search Google for the query.                 |
-| `play <video>`        | Play a YouTube video.                        |
-| `open <app>`          | Open an application or website.              |
-| `system <command>`    | Control system settings (e.g., volume).      |
+```bash
+python main.py --install-autostart     # start hidden at login + add AURA to the app menu
+python main.py --uninstall-autostart
 ```
 
-## 📁 Project Structure
+### ⌨️ Global hotkey
+
+```bash
+python main.py --install-hotkey            # GNOME: Super+J toggles AURA
+python main.py --install-hotkey "<Ctrl><Alt>j"   # pick another key
+python main.py --uninstall-hotkey
+```
+
+Wayland doesn't let apps grab keys directly, so this adds a GNOME custom shortcut that runs
+`main.py --toggle`. On other desktops, bind that command to a key in your keyboard settings.
+AURA runs as a single instance: launching it again just brings the window back.
+
+Reminders fire only while AURA is running. Hide it with the hotkey instead of closing it, and they'll still pop up.
+
+### 🐧 Linux
+
+```bash
+sudo apt install pulseaudio-utils xdg-utils libnotify-bin
+```
+
+`pactl` (from `pulseaudio-utils`, works with PipeWire too) handles volume; `xdg-open` opens saved documents and images; `notify-send` (from `libnotify-bin`) shows reminder notifications.
+"Open <app>" launches the matching executable on your `PATH`; "close <app>" uses `pkill`.
+
+> **Free tier note:** Groq's free tier allows 8,000 tokens per minute, and it counts each reply's
+> `max_tokens` allowance against that. AURA keeps requests small (old tool results are cleared,
+> history is summarized, replies capped at `MaxTokens=1024`), and if you send several tool-heavy
+> messages within a minute it waits and retries automatically. On a paid tier, raise `MaxTokens` in `.env`.
+
+---
+
+## 🏗️ How it works
 
 ```
-Jarvis-AI-v2/
-├── Backend/
-│   ├── Auth.py               # User authentication & session management
-│   ├── Automation.py         # System/app control (open, volume, play music)
-│   ├── ChatBot.py            # Groq LLM interaction logic
-│   ├── ImageGeneration.py    # AI image generation via Replicate
-│   ├── Model.py              # Intent classification & first-layer routing
-│   ├── RealtimeSearchEngine.py # Live web scraping & news fetching
-│   ├── SpeechToText.py       # Groq Whisper + Web Speech API fallback
-│   ├── TextToSpeech.py       # Voice synthesis engine
-│   └── Weather.py            # Real-time weather data fetcher
-│
-├── Frontend/
-│   ├── GUI.py                # Main PyQt5 application window
-│   ├── StarfieldWidget.py    # Animated background canvas
-│   ├── StarfieldDesign.md    # Design notes for the starfield effect
-│   ├── Files/                # Persistent local data storage
-│   │   ├── Database.data
-│   │   ├── Imagegeneration.data
-│   │   ├── Mic.data
-│   │   ├── Responses.data
-│   │   └── Status.data
-│   └── Graphics/             # UI assets & icons
-│       ├── Home.png
-│       ├── Jarvis.gif
-│       ├── Maximize.png
-│       ├── Mic_off.png
-│       ├── Mic_on.png
-│       ├── Minimize.png
-│       ├── Minimize2.png
-│       └── Settings.png
-│
-├── Temp/                     # Temporary session cache
-│   ├── Database.data
-│   └── Responses.data
-│
-├── .gitignore                # Git ignored files & folders
-├── main.py                   # Application entry point
-├── password.txt              # (Ensure this is in .gitignore if real)
-├── pyproject.toml            # Project metadata & build config
-├── requirements.txt          # Python package dependencies
-└── README.md                 # You are here
+main.py
+aura/
+├── config.py   # settings from .env
+├── tools.py      # 20 LangChain tools: web_search, read_url, read_file, set_reminder, ...
+├── agent.py      # LangGraph agent (create_agent) + SQLite memory + middleware
+├── reminders.py  # reminder storage (SQLite)
+├── hotkey.py     # GNOME shortcut installer
+├── desktop.py    # autostart + app menu entries
+├── memory.py     # long-term memory (LangGraph SqliteStore): facts + daily notes
+├── learner.py    # background memory agent that extracts facts from conversations
+├── ui.py         # Qt window hosting the web UI; agent on a worker thread; single-instance + reminders
+└── web/          # the chat UI: index.html, app.css, app.js + vendored marked, DOMPurify, highlight.js, Inter
+Data/             # memory, reminders, saved documents and images (git-ignored)
 ```
+
+- **Agent**: `langchain.agents.create_agent` builds a LangGraph ReAct loop around `ChatGroq`. The model reads each tool's docstring and decides what to call.
+- **Middleware**: a dynamic system prompt (injects the current date/time), `SummarizationMiddleware` (compresses old history past ~4k tokens), `ContextEditingMiddleware` (sends old tool results as `[cleared]`), `ToolErrorMiddleware` (failed tools are reported to the model instead of crashing), and `ModelCallLimitMiddleware` (caps runaway tool loops).
+- **Conversation memory**: `SqliteSaver` checkpointer in `Data/memory.sqlite`. "New chat" starts a new thread; old ones stay saved.
+- **Long-term memory**: a LangGraph `SqliteStore` (`Data/memory_store.sqlite`) holds facts and daily notes, injected into the system prompt each turn (older days via the `recall` tool). After ~45s of quiet, a background agent on the small model reads new messages and returns structured add / update / delete operations; it skips one-off requests, secrets and sensitive topics, and converts relative dates to absolute ones.
+- **Rate limits**: a custom middleware tries `ChatModel`, then each of `FallbackModels` (every Groq model has its own tokens-per-minute budget), and only waits when all are limited, streaming the countdown to the UI. Stop is cancellable at any point, and the saved history is repaired so a cancelled tool call never breaks the next request.
+- **Streaming**: `graph.stream(..., stream_mode=["messages", "updates"])` yields tokens and tool calls, which the Qt side forwards to the page over `QWebChannel`.
+- **UI**: a local web page rendered by QtWebEngine. Model output is rendered with `marked` and sanitized with `DOMPurify`; all assets are bundled, nothing loads from the internet. Links open in your browser.
+
+Adding a tool is one decorated function in `aura/tools.py` plus an entry in `TOOLS`.
+
+---
 
 ## 🤝 Contributing
 
@@ -159,7 +151,7 @@ Jarvis-AI-v2/
 
 ## 🐞 Bug Reports & Feature Requests
 
-Submit issues [here](https://github.com/aliii-codes/Jarvis-AI-v2/issues) using the provided templates.
+Submit issues [here](https://github.com/aliii-codes/Jarvis-AI-v2/issues).
 
 ## 📜 License
 
@@ -167,6 +159,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🎉 Acknowledgements
 
-- **Groq**: For providing powerful AI models.
-- **Open-Source Libraries**: `AppOpener`, `PyWhatKit`, `python-dotenv`, `requests`, `beautifulsoup4`, 'groq', 'pil'.
-```
+- **Groq** for fast inference.
+- **LangChain / LangGraph** for the agent framework.
+- **Open-source libraries**: `ddgs`, `PyQt5`, `beautifulsoup4`, `pypdf`, `AppOpener`, `python-dotenv`, `requests`.

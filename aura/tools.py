@@ -1,0 +1,368 @@
+"""Tools the agent can call. Docstrings are what the model reads to decide when to use each one."""
+import fnmatch
+import io
+import os
+import platform
+import re
+import time
+import shutil
+import subprocess
+import webbrowser
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Callable, Literal
+from urllib.parse import quote_plus
+
+import requests
+from bs4 import BeautifulSoup
+from ddgs import DDGS
+from langchain_core.tools import tool
+from pypdf import PdfReader
+
+from . import config, memory, reminders
+
+IS_WINDOWS = platform.system() == "Windows"
+IS_MAC = platform.system() == "Darwin"
+USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+
+HOME = Path.home()
+_BLOCKS = ["p", "div", "li", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "pre", "blockquote", "section", "dd", "dt", "td", "th"]
+MAX_CHARS = 8000  # keeps a page or file within Groq's free-tier tokens-per-minute budget
+
+# Set by the UI: closing the window, and running a function on the UI thread (needed for the clipboard).
+on_quit: Callable[[], None] = lambda: None
+ui_call: Callable[[Callable[[], Any]], Any] = lambda fn: fn()
+
+
+def open_path(path: str) -> None:
+    """Open a file with the OS default application."""
+    if IS_WINDOWS:
+        os.startfile(path)
+    else:
+        subprocess.Popen(["open" if IS_MAC else "xdg-open", path],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def _slug(text: str, limit: int = 60) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")[:limit] or "untitled"
+
+
+def _truncate(text: str) -> str:
+    if len(text) <= MAX_CHARS:
+        return text
+    return text[:MAX_CHARS] + f"\n\n[truncated: showing {MAX_CHARS} of {len(text)} characters]"
+
+
+def _pdf_text(data: bytes) -> str:
+    return "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(data)).pages)
+
+
+def _in_home(path: str) -> Path:
+    """Resolve a user-supplied path, refusing anything outside the home folder."""
+    p = Path(path).expanduser()
+    p = (p if p.is_absolute() else HOME / p).resolve()
+    if not p.is_relative_to(HOME):
+        raise PermissionError(f"Only files inside {HOME} can be accessed.")
+    return p
+
+
+@tool
+def web_search(query: str) -> str:
+    """Search the web for current information: news, prices, scores, recent events,
+    or anything you are not sure about. Returns titles, snippets and URLs."""
+    results = DDGS().text(query, max_results=6)
+    if not results:
+        return "No results found."
+    return "\n\n".join(f"{r['title']}\n{r['body']}\n{r['href']}" for r in results)
+
+
+@tool
+def get_weather(city: str) -> str:
+    """Get the current weather and today's forecast for a city."""
+    data = requests.get(f"https://wttr.in/{quote_plus(city)}?format=j1", timeout=10).json()
+    now, today = data["current_condition"][0], data["weather"][0]
+    area = data["nearest_area"][0]
+    place = f"{area['areaName'][0]['value']}, {area['country'][0]['value']}"
+    return (f"{place}: {now['weatherDesc'][0]['value']}, {now['temp_C']}°C "
+            f"(feels like {now['FeelsLikeC']}°C), humidity {now['humidity']}%, "
+            f"wind {now['windspeedKmph']} km/h. Today: min {today['mintempC']}°C, max {today['maxtempC']}°C.")
+
+
+@tool
+def open_app(name: str) -> str:
+    """Open a desktop application installed on this computer, e.g. "firefox", "spotify", "code"."""
+    if IS_WINDOWS:
+        from AppOpener import open as appopen
+        appopen(name, match_closest=True, throw_error=True)
+        return f"Opened {name}."
+    candidates = [name, name.lower(), name.lower().replace(" ", "-"), name.lower().replace(" ", "")]
+    exe = next((p for c in candidates if (p := shutil.which(c))), None)
+    if not exe:
+        return f"No application called '{name}' is installed. If it is a website, use open_website instead."
+    subprocess.Popen([exe], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    return f"Opened {name}."
+
+
+@tool
+def close_app(name: str) -> str:
+    """Close a running desktop application by name."""
+    if IS_WINDOWS:
+        from AppOpener import close
+        close(name, match_closest=True, throw_error=True)
+        return f"Closed {name}."
+    if subprocess.run(["pkill", "-if", name]).returncode != 0:
+        return f"No running application matching '{name}'."
+    return f"Closed {name}."
+
+
+@tool
+def open_website(url: str) -> str:
+    """Open a website in the user's browser. Accepts a full URL or a domain like "github.com"."""
+    if not re.match(r"^https?://", url):
+        url = "https://" + url
+    webbrowser.open(url)
+    return f"Opened {url} in the browser."
+
+
+@tool
+def search_in_browser(query: str, site: Literal["google", "youtube"] = "google") -> str:
+    """Open a Google or YouTube search results page in the user's browser.
+    Use this only when the user wants to see the results themselves; use web_search to answer questions."""
+    base = "https://www.youtube.com/results?search_query=" if site == "youtube" else "https://www.google.com/search?q="
+    webbrowser.open(base + quote_plus(query))
+    return f"Opened {site} search for '{query}'."
+
+
+@tool
+def play_on_youtube(query: str) -> str:
+    """Play a song or video on YouTube: finds the best match and opens it in the browser."""
+    url = f"https://www.youtube.com/results?search_query={quote_plus(query)}"
+    html = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=10).text
+    match = re.search(r'"videoId":"([\w-]{11})"', html)
+    if match:
+        url = f"https://www.youtube.com/watch?v={match.group(1)}"
+    webbrowser.open(url)
+    return f"Playing '{query}' on YouTube."
+
+
+@tool
+def set_volume(action: Literal["mute", "unmute", "up", "down"]) -> str:
+    """Change the computer's speaker volume."""
+    if IS_WINDOWS:
+        import keyboard
+        key = {"mute": "volume mute", "unmute": "volume mute", "up": "volume up", "down": "volume down"}[action]
+        keyboard.press_and_release(key)
+    else:
+        sink = "@DEFAULT_SINK@"
+        cmd = {
+            "mute": ["pactl", "set-sink-mute", sink, "1"],
+            "unmute": ["pactl", "set-sink-mute", sink, "0"],
+            "up": ["pactl", "set-sink-volume", sink, "+10%"],
+            "down": ["pactl", "set-sink-volume", sink, "-10%"],
+        }[action]
+        subprocess.run(cmd, check=True)
+    return f"Volume {action}."
+
+
+@tool
+def save_document(title: str, content: str) -> str:
+    """Save text you wrote (an email, letter, essay, code, notes...) to a file and open it
+    in the user's text editor. Write the full content yourself, then call this."""
+    docs = config.DATA_DIR / "documents"
+    docs.mkdir(exist_ok=True)
+    path = docs / f"{_slug(re.sub(r'\.\w{1,4}$', '', title))}.txt"  # model sometimes includes ".txt"
+    path.write_text(content, encoding="utf-8")
+    open_path(str(path))
+    return f"Saved and opened {path}."
+
+
+@tool
+def generate_image(prompt: str) -> str:
+    """Generate an image from a text description and open it."""
+    if not config.HF_API_KEY:
+        return "Image generation is not configured: add HuggingFaceAPIKey to the .env file."
+    resp = requests.post(
+        "https://router.huggingface.co/hf-inference/models/stabilityai/stable-diffusion-xl-base-1.0",
+        headers={"Authorization": f"Bearer {config.HF_API_KEY}"},
+        json={"inputs": prompt},
+        timeout=120,
+    )
+    if resp.status_code != 200 or not resp.headers.get("Content-Type", "").startswith("image/"):
+        return f"Image generation failed ({resp.status_code}): {resp.text[:200]}"
+    images = config.DATA_DIR / "images"
+    images.mkdir(exist_ok=True)
+    path = images / f"{_slug(prompt, 40)}_{datetime.now():%H%M%S}.jpg"
+    path.write_bytes(resp.content)
+    open_path(str(path))
+    return f"Generated and opened {path}."
+
+
+@tool
+def read_url(url: str) -> str:
+    """Fetch a web page or online PDF and return its main text, e.g. to summarize an article
+    or read a page found with web_search."""
+    if not re.match(r"^https?://", url):
+        url = "https://" + url
+    resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=15)
+    resp.raise_for_status()
+    if "pdf" in resp.headers.get("Content-Type", "") or url.lower().endswith(".pdf"):
+        return _truncate(_pdf_text(resp.content))
+    soup = BeautifulSoup(resp.text, "html.parser")
+    title = soup.title.get_text(strip=True) if soup.title else url
+    for tag in soup(["script", "style", "noscript", "nav", "footer", "header", "aside", "form", "svg", "sup"]):
+        tag.decompose()
+    root = soup.find("article") or soup.find("main") or soup.body or soup
+    # Break lines only at block elements so inline links/spans stay within their sentence.
+    for br in root.find_all("br"):
+        br.replace_with("\n")
+    for block in root.find_all(_BLOCKS):
+        block.insert_before("\n")
+        block.insert_after("\n")
+    lines = (" ".join(line.split()) for line in root.get_text().splitlines())
+    return _truncate(f"{title}\n\n" + "\n".join(line for line in lines if line))
+
+
+@tool
+def read_clipboard() -> str:
+    """Get the text currently in the user's clipboard (what they just copied)."""
+    from PyQt5.QtWidgets import QApplication
+    text = ui_call(lambda: QApplication.clipboard().text())
+    return _truncate(text) if text else "The clipboard is empty."
+
+
+@tool
+def copy_to_clipboard(text: str) -> str:
+    """Put text into the user's clipboard so they can paste it."""
+    from PyQt5.QtWidgets import QApplication
+    ui_call(lambda: QApplication.clipboard().setText(text))
+    return "Copied to clipboard."
+
+
+@tool
+def list_folder(path: str = "~") -> str:
+    """List the files and folders in a directory inside the user's home folder (e.g. "~/Downloads")."""
+    folder = _in_home(path)
+    entries = sorted((e for e in folder.iterdir() if not e.name.startswith(".")),
+                     key=lambda e: (not e.is_dir(), e.name.lower()))
+    lines = []
+    for e in entries[:100]:
+        if e.is_dir():
+            lines.append(f"{e.name}/")
+        else:
+            st = e.stat()
+            lines.append(f"{e.name}  ({st.st_size / 1024:.0f} KB, modified {datetime.fromtimestamp(st.st_mtime):%Y-%m-%d})")
+    more = f"\n...and {len(entries) - 100} more" if len(entries) > 100 else ""
+    return f"{folder}:\n" + ("\n".join(lines) or "(empty)") + more
+
+
+@tool
+def find_files(name: str, folder: str = "~") -> str:
+    """Find files by name inside the user's home folder. `name` is part of the file name
+    or a glob like "*.pdf". Returns up to 25 matching paths, newest first."""
+    root = _in_home(folder)
+    pattern = name.lower() if any(ch in name for ch in "*?[") else f"*{name.lower()}*"
+    skip = {"node_modules", "__pycache__", "venv", ".venv", "site-packages"}
+    matches, deadline = [], time.monotonic() + 4
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".") and d not in skip]
+        matches += [Path(dirpath, f) for f in filenames if fnmatch.fnmatch(f.lower(), pattern)]
+        if len(matches) >= 200 or time.monotonic() > deadline:
+            break
+    if not matches:
+        return f"No files matching '{name}' in {root}."
+    matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return "\n".join(str(p) for p in matches[:25])
+
+
+@tool
+def read_file(path: str) -> str:
+    """Read a text file or PDF inside the user's home folder (notes, code, documents, logs...)."""
+    p = _in_home(path)
+    data = p.read_bytes()
+    if p.suffix.lower() == ".pdf":
+        return _truncate(_pdf_text(data))
+    if b"\0" in data[:4096]:
+        return f"{p.name} is a binary file and can't be read as text."
+    return _truncate(data.decode("utf-8", errors="replace"))
+
+
+@tool
+def set_reminder(message: str, at: str = "", in_minutes: float = 0) -> str:
+    """Remind the user about something later with a desktop notification.
+    Give either `in_minutes` (e.g. 20) or `at` as a local date-time "YYYY-MM-DD HH:MM"."""
+    if in_minutes:
+        due_at = datetime.now() + timedelta(minutes=in_minutes)
+    elif at:
+        due_at = datetime.fromisoformat(at.strip().replace("T", " "))
+    else:
+        return "Specify when: either in_minutes or at."
+    if due_at <= datetime.now():
+        return f"{due_at:%Y-%m-%d %H:%M} is in the past; pick a future time."
+    rid = reminders.add(message, due_at)
+    return f"Reminder #{rid} set for {due_at:%A %d %B, %H:%M}: {message}"
+
+
+@tool
+def list_reminders() -> str:
+    """List upcoming reminders with their ids."""
+    items = reminders.pending()
+    if not items:
+        return "No upcoming reminders."
+    return "\n".join(f"#{i} {due:%a %d %b %H:%M}: {msg}" for i, msg, due in items)
+
+
+@tool
+def cancel_reminder(reminder_id: int) -> str:
+    """Cancel an upcoming reminder by its id (see list_reminders)."""
+    return f"Cancelled reminder #{reminder_id}." if reminders.cancel(reminder_id) else f"No upcoming reminder #{reminder_id}."
+
+
+def _best_match(text: str) -> dict | None:
+    want = memory._words(text)
+    scored = sorted(((len(want & memory._words(f["text"])), f) for f in memory.facts()), key=lambda s: -s[0])
+    return scored[0][1] if scored and scored[0][0] else None
+
+
+@tool
+def remember(fact: str, replaces: str = "") -> str:
+    """Save something about the user to long-term memory: when they ask you to remember it, or tell you
+    something lasting that changed (moved city, new job). Write a short statement without their name
+    and with absolute dates ("Has a cat named Mochi", "Moved to Islamabad in Oct 2026", never "last week"). If it updates something you already know,
+    put the old fact's text in `replaces` so it's corrected instead of duplicated."""
+    old = _best_match(replaces) if replaces else None
+    if old:
+        memory.edit_fact(old["id"], fact)
+        return f"Updated memory: {old['text']} -> {fact}"
+    return f"Remembered: {fact}" if memory.add_fact(fact) else "That's already in memory."
+
+
+@tool
+def forget(what: str) -> str:
+    """Remove something from long-term memory when the user asks you to forget it.
+    `what` describes the fact; the closest matching saved fact is deleted."""
+    fact = _best_match(what)
+    if not fact:
+        return "Nothing in memory matches that."
+    memory.delete_fact(fact["id"])
+    return f"Forgot: {fact['text']}"
+
+
+@tool
+def recall(query: str) -> str:
+    """Search long-term memory, including notes from past days that aren't in your context,
+    e.g. "what did I work on last week", "when is my exam"."""
+    hits = memory.search(query)
+    return "\n".join(hits) if hits else "Nothing in memory about that."
+
+
+@tool
+def quit_aura() -> str:
+    """Close the AURA app. Only use when the user clearly says goodbye or asks to quit."""
+    on_quit()
+    return "Closing."
+
+
+TOOLS = [web_search, read_url, get_weather, open_app, close_app, open_website, search_in_browser,
+         play_on_youtube, set_volume, save_document, generate_image,
+         read_clipboard, copy_to_clipboard, list_folder, find_files, read_file,
+         set_reminder, list_reminders, cancel_reminder, remember, forget, recall, quit_aura]

@@ -1,7 +1,21 @@
 [project]
-name = "jarvis-ai"
-version = "0.1.0"
-description = "Add your description here"
+name = "aura"
+version = "2.1.0"
+description = "AURA: desktop AI assistant built on LangGraph, with a minimal PyQt chat UI"
 readme = "README.md"
-requires-python = ">=3.13"
-dependencies = []
+requires-python = ">=3.10"
+dependencies = [
+    "langchain>=1.0",
+    "langgraph>=1.0",
+    "langchain-groq>=1.0",
+    "langgraph-checkpoint-sqlite>=3.0",
+    "ddgs>=9.0.0",
+    "requests>=2.31.0",
+    "beautifulsoup4>=4.12.3",
+    "pypdf>=4.0",
+    "AppOpener>=1.6; sys_platform == 'win32'",
+    "keyboard>=0.13.5; sys_platform == 'win32'",
+    "PyQt5>=5.15.10",
+    "PyQtWebEngine>=5.15.6",
+    "python-dotenv>=1.0.1",
+]
