@@ -1,28 +1,20 @@
-# Core AI / APIs
-groq>=0.9.0
-edge-tts>=6.1.9
-googlesearch-python>=1.2.3
+# Agent
+langchain>=1.0
+langgraph>=1.0
+langchain-groq>=1.0
+langgraph-checkpoint-sqlite>=3.0
 
-# Speech
-SpeechRecognition>=3.10.0
-pyaudio>=0.2.14
-
-# Audio playback
-pygame>=2.5.2
-
-# GUI
-PyQt5>=5.15.10
-
-# Automation
-pywhatkit>=5.4
-AppOpener>=1.6
-beautifulsoup4>=4.12.3
-keyboard>=0.13.5
+# Tools
+ddgs>=9.0.0
 requests>=2.31.0
+beautifulsoup4>=4.12.3
+pypdf>=4.0
+AppOpener>=1.6; sys_platform == "win32"
+keyboard>=0.13.5; sys_platform == "win32"
 
-# Image generation
-Pillow>=10.2.0
+# UI
+PyQt5>=5.15.10
+PyQtWebEngine>=5.15.6
 
 # Utilities
 python-dotenv>=1.0.1
-rich>=13.7.0
