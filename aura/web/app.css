@@ -194,7 +194,14 @@ main::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
 /* typing indicator */
 .typing { display: inline-flex; gap: 5px; padding: 8px 0; }
 .typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: blink 1.2s infinite ease-in-out both; }
-.typing[hidden] { display: none; }  /* the display rule above would otherwise beat the hidden attribute */
+.typing[hidden] { display: none; }
+
+/* blinking cursor at the end of text that is still being revealed */
+.caret {
+  display: inline-block; width: 7px; height: 1.05em; margin-left: 2px; vertical-align: -0.15em;
+  border-radius: 2px; background: var(--text); opacity: .75; animation: caret 1s steps(2, start) infinite;
+}
+@keyframes caret { to { visibility: hidden; } }  /* the display rule above would otherwise beat the hidden attribute */
 .typing span:nth-child(2) { animation-delay: .15s; }
 .typing span:nth-child(3) { animation-delay: .3s; }
 

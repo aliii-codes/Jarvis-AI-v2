@@ -47,16 +47,18 @@ function copyButton(getText, label) {
   return btn;
 }
 
-function renderMarkdown(target, text) {
+function renderMarkdown(target, text, highlight = true) {
   // No <img> from model text: real images arrive as tool results; a model-written link would only be a broken image.
   target.innerHTML = DOMPurify.sanitize(marked.parse(text), { FORBID_TAGS: ["img"] });
   target.querySelectorAll("pre > code").forEach((code) => {
     const pre = code.parentElement;
     const lang = ((code.className || "").match(/language-([\w+#-]+)/) || [])[1] || "";
-    try {
-      if (lang && hljs.getLanguage(lang)) hljs.highlightElement(code);
-      else code.innerHTML = hljs.highlightAuto(code.textContent).value;
-    } catch (e) { /* plain text is fine */ }
+    if (highlight) {  // skipped while text is still being revealed: re-highlighting every frame is costly
+      try {
+        if (lang && hljs.getLanguage(lang)) hljs.highlightElement(code);
+        else code.innerHTML = hljs.highlightAuto(code.textContent).value;
+      } catch (e) { /* plain text is fine */ }
+    }
     const block = el("div", "codeblock");
     const head = el("div", "code-head", `<span>${lang || "code"}</span>`);
     head.appendChild(copyButton(() => code.textContent, "Copy"));
@@ -169,7 +171,7 @@ function startTurn() {
   const typing = el("div", "typing", "<span></span><span></span><span></span>");
   row.append(body, typing);
   thread.appendChild(row);
-  turn = { row, body, typing, segment: null, chips: [], texts: [], renderQueued: false };
+  turn = { row, body, typing, segment: null, chips: [], texts: [], ticking: false, done: false, stopped: false };
   follow(true);
 }
 
@@ -186,26 +188,56 @@ function settleChips() {
   });
 }
 
+// Smooth streaming. Groq delivers a whole reply in well under a second, which reads as "nothing, then
+// everything". Incoming text is buffered and revealed at a steady pace: faster when a lot is waiting,
+// never slower than ~180 chars/s, so a typical reply takes 2-3 seconds to type out.
 function onToken(text) {
   if (!turn) startTurn();
   turn.typing.hidden = true;
   if (!turn.segment) {
     settleChips();
-    turn.segment = { node: el("div", "content"), text: "" };
+    turn.segment = { node: el("div", "content"), text: "", shown: 0 };
     turn.body.appendChild(turn.segment.node);
     turn.texts.push(turn.segment);
   }
   turn.segment.text += text;
-  if (!turn.renderQueued) {
-    turn.renderQueued = true;
-    requestAnimationFrame(() => {
-      if (!turn) return;
-      turn.renderQueued = false;
-      if (turn.segment) renderMarkdown(turn.segment.node, turn.segment.text);
-      follow();
-    });
-  }
   setStatus("typing…", true);
+  startTicking();
+}
+
+function startTicking() {
+  if (turn && !turn.ticking) { turn.ticking = true; requestAnimationFrame(tick); }
+}
+
+function withCaret(node) {
+  // Follow the last *node* (text or element) so the caret lands after trailing plain text,
+  // not after the last bold/link element that happens to precede it.
+  // Whitespace-only text nodes (Markdown emits "\n" between blocks) don't count as content.
+  const lastReal = (n) => {
+    let c = n.lastChild;
+    while (c && c.nodeType === Node.TEXT_NODE && !c.textContent.trim()) c = c.previousSibling;
+    return c;
+  };
+  let last = node, c;
+  while ((c = lastReal(last)) && c.nodeType === Node.ELEMENT_NODE && !/^(TABLE|HR|BR)$/.test(c.tagName)) last = c;
+  if (c && c.nodeType === Node.TEXT_NODE) c.after(el("span", "caret"));
+  else last.appendChild(el("span", "caret"));
+}
+
+function tick() {
+  if (!turn) return;
+  const seg = turn.texts.find((s) => s.shown < s.text.length);  // reveal segments in order
+  if (seg) {
+    const backlog = seg.text.length - seg.shown;
+    seg.shown = Math.min(seg.text.length, seg.shown + Math.min(40, Math.max(3, Math.ceil(backlog / 90))));
+    renderMarkdown(seg.node, seg.text.slice(0, seg.shown), false);
+    withCaret(seg.node);
+    follow();
+    requestAnimationFrame(tick);
+    return;
+  }
+  turn.ticking = false;
+  if (turn.done) finishTurn();  // everything received and revealed
 }
 
 function onTool(name, running, done) {
@@ -240,17 +272,24 @@ function onTool(name, running, done) {
 }
 
 function onTurnDone(stopped) {
-  if (turn) {
-    settleChips();
-    if (turn.skel) { turn.skel.remove(); turn.skel = null; }
-    if (stopped) turn.body.appendChild(el("div", "stopped", "Stopped"));
-    turn.texts.forEach((s) => renderMarkdown(s.node, s.text));
-    turn.typing.remove();
-    const full = turn.texts.map((s) => s.text).join("\n\n").trim();
-    if (full) turn.row.appendChild(actionsFor(() => full));
-    if (!turn.body.children.length) turn.row.remove();
-    turn = null;
-  }
+  if (!turn) { setBusy(false); return; }
+  turn.done = true;
+  turn.stopped = stopped;
+  if (stopped) turn.texts.forEach((s) => { s.shown = s.text.length; });  // Stop: show what arrived, now
+  if (turn.ticking) return;  // tick() calls finishTurn once the reveal catches up
+  finishTurn();
+}
+
+function finishTurn() {
+  settleChips();
+  if (turn.skel) { turn.skel.remove(); turn.skel = null; }
+  if (turn.stopped) turn.body.appendChild(el("div", "stopped", "Stopped"));
+  turn.texts.forEach((s) => renderMarkdown(s.node, s.text));  // final render, with code highlighting
+  turn.typing.remove();
+  const full = turn.texts.map((s) => s.text).join("\n\n").trim();
+  if (full) turn.row.appendChild(actionsFor(() => full));
+  if (!turn.body.children.length) turn.row.remove();
+  turn = null;
   setBusy(false);
   follow();
 }
