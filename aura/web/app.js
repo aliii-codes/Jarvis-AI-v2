@@ -94,6 +94,17 @@ function addAssistant(text) {
   thread.appendChild(row);
 }
 
+function addCheckin(text) {
+  hideWelcome();
+  const row = el("div", "msg assistant checkin");
+  const label = el("div", "checkin-label", "✦ Check-in");
+  const content = el("div", "content");
+  renderMarkdown(content, text);
+  row.append(label, content);
+  thread.appendChild(row);
+  follow(true);
+}
+
 function actionsFor(getText) {
   const actions = el("div", "actions");
   actions.appendChild(copyButton(getText, "Copy"));
@@ -481,6 +492,70 @@ $("#note-input").addEventListener("keydown", (e) => {
 });
 $("#note-search").addEventListener("input", renderNotes);
 
+// ── settings panel ────────────────────────────────────────────
+const settingsPanel = $("#settings-panel");
+const LABELS = { "<Super>j": "Super+J" };
+
+$("#settings-btn").addEventListener("click", () => { openDrawer(settingsPanel); bridge && bridge.getSettings(); });
+settingsPanel.querySelector(".drawer-close").addEventListener("click", closeDrawers);
+$("#open-data").addEventListener("click", () => bridge && bridge.openDataFolder());
+
+function saveSetting(name, value) { bridge && bridge.saveSetting(name, JSON.stringify(value)); }
+
+function renderSettings(snap) {
+  settingsPanel.querySelectorAll("input[data-setting]").forEach((inp) => {
+    const v = snap[inp.dataset.setting];
+    if (inp.type === "checkbox") inp.checked = !!v;
+    else if (document.activeElement !== inp) inp.value = v || "";  // don't clobber typing
+  });
+  settingsPanel.querySelectorAll(".segmented").forEach((seg) => {
+    seg.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.value === snap[seg.dataset.setting]));
+  });
+  const sel = settingsPanel.querySelector('select[data-setting="chat_model"]');
+  sel.innerHTML = "";
+  snap.models.forEach((m) => { const o = el("option"); o.value = m; o.textContent = m; sel.appendChild(o); });
+  sel.value = snap.chat_model;
+  settingsPanel.querySelectorAll(".key-field").forEach((f) => {
+    const masked = snap[f.dataset.key];
+    f.querySelector("input").placeholder = masked ? `Saved (${masked}). Paste a new key to replace it` : "Paste your key";
+  });
+  $("#hotkey-label").textContent = snap.hotkey ? `${LABELS[snap.hotkey] || snap.hotkey} shows or hides the window` : "Off";
+}
+
+settingsPanel.querySelectorAll('input[data-setting]:not([type="checkbox"])').forEach((inp) =>
+  inp.addEventListener("change", () => saveSetting(inp.dataset.setting, inp.value)));
+settingsPanel.querySelectorAll('input[type="checkbox"][data-setting]').forEach((inp) =>
+  inp.addEventListener("change", () => saveSetting(inp.dataset.setting, inp.checked)));
+settingsPanel.querySelector('select[data-setting="chat_model"]').addEventListener("change", (e) => saveSetting("chat_model", e.target.value));
+settingsPanel.querySelectorAll(".segmented").forEach((seg) => seg.querySelectorAll("button").forEach((b) =>
+  b.addEventListener("click", () => {
+    seg.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+    saveSetting(seg.dataset.setting, b.dataset.value);
+  })));
+settingsPanel.querySelectorAll(".key-field").forEach((f) => f.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const v = f.querySelector("input").value.trim();
+  if (!v && f.dataset.key === "groq_key") return;
+  const status = f.querySelector(".key-status");
+  status.className = "key-status"; status.textContent = "Checking…";
+  f.querySelector("button").disabled = true;
+  saveSetting(f.dataset.key, v);
+}));
+
+function onSettingResult(name, ok, message) {
+  const keyField = settingsPanel.querySelector(`.key-field[data-key="${name}"]`);
+  if (keyField) {
+    const status = keyField.querySelector(".key-status");
+    status.className = "key-status " + (ok ? "ok" : "err");
+    status.textContent = (ok ? "✓ " : "") + message;
+    keyField.querySelector("button").disabled = false;
+    if (ok) keyField.querySelector("input").value = "";
+    return;
+  }
+  if (!ok) addNote(message, null, "error");
+  else showToast([message], "Settings");
+}
+
 // ── chat history sidebar ──────────────────────────────────────
 const app = $("#app"), chatList = $("#chat-list"), chatSearch = $("#chat-search");
 const PENCIL = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
@@ -703,18 +778,21 @@ $("#forget-all").addEventListener("click", (e) => {
   forgetArmed = setTimeout(() => { forgetArmed = null; btn.textContent = "Forget everything"; }, 4000);
 });
 
-function showToast(changes) {
+function showToast(changes, heading) {
   if (!changes.length) return;
-  freshTexts = new Set(changes.map((c) => c.replace(/^[^:]+:\s*/, "")));
+  if (!heading) freshTexts = new Set(changes.map((c) => c.replace(/^[^:]+:\s*/, "")));
   toast.innerHTML = "";
-  const title = el("b"); title.textContent = "Memory updated";
+  const title = el("b"); title.textContent = heading || "Memory updated";
   const detail = el("span"); detail.textContent = changes[0] + (changes.length > 1 ? `  (+${changes.length - 1} more)` : "");
   toast.append(title, detail);
   toast.hidden = false;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { toast.hidden = true; }, 6000);
 }
-toast.addEventListener("click", () => { toast.hidden = true; openPanel(); });
+toast.addEventListener("click", () => {
+  toast.hidden = true;
+  if (toast.firstChild && toast.firstChild.textContent === "Memory updated") openPanel();
+});
 
 // ── wiring to Python ──────────────────────────────────────────
 new QWebChannel(qt.webChannelTransport, (channel) => {
@@ -729,13 +807,16 @@ new QWebChannel(qt.webChannelTransport, (channel) => {
     document.title = cfg.assistant;
     input.placeholder = `Message ${cfg.assistant}…`;
     window.USER_NAME = cfg.user;
-    if (cfg.error) { addNote(cfg.error, "Fix your .env file and restart.", "error"); input.disabled = true; }
+    if (!welcome.hidden) showWelcome();  // refresh the greeting after a name change
+    if (cfg.error) addNote(cfg.error, "Add your Groq API key in Settings (⚙ at the top right).", "error");
+    input.disabled = !!cfg.error;  // re-enabled once a working key is saved in Settings
   });
   bridge.history.connect((json) => {
     const items = JSON.parse(json);
     thread.innerHTML = "";
     items.forEach(([role, text, path]) =>
-      role === "user" ? addUser(text) : role === "image" ? addImageRow(text, path) : addAssistant(text));
+      role === "user" ? addUser(text) : role === "image" ? addImageRow(text, path)
+        : role === "checkin" ? addCheckin(text) : addAssistant(text));
     if (!items.length) showWelcome(); else hideWelcome();
     follow(true);
   });
@@ -752,6 +833,9 @@ new QWebChannel(qt.webChannelTransport, (channel) => {
   bridge.memory.connect((json) => renderMemory(JSON.parse(json)));
   bridge.threads.connect((json) => { chats = JSON.parse(json); renderChats(); });
   bridge.lists.connect((json) => renderLists(JSON.parse(json)));
+  bridge.settings.connect((json) => renderSettings(JSON.parse(json)));
+  bridge.settingResult.connect(onSettingResult);
+  bridge.checkin.connect(addCheckin);
   bridge.searchResults.connect((json) => { if (searching) renderSearch(JSON.parse(json)); });
   bridge.memorySaved.connect((json) => showToast(JSON.parse(json)));
 

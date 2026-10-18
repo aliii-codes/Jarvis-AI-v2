@@ -1,36 +1,52 @@
-"""Settings loaded from `.env` (environment variables take precedence)."""
+"""Settings loaded from `.env` (environment variables take precedence). `reload()` re-reads them at runtime."""
 import os
 from pathlib import Path
 
 from dotenv import dotenv_values
 
 ROOT = Path(__file__).resolve().parent.parent
+ENV_FILE = ROOT / ".env"
 DATA_DIR = ROOT / "Data"
 DATA_DIR.mkdir(exist_ok=True)
-
-_env = dotenv_values(ROOT / ".env")
-
-
-def _get(key: str, default: str | None = None) -> str | None:
-    return os.environ.get(key) or _env.get(key) or default
-
-
-GROQ_API_KEY = _get("GroqAPIKey") or _get("GROQ_API_KEY")
-HF_API_KEY = _get("HuggingFaceAPIKey")
-# Hugging Face text-to-image model (served by its partner providers; falls back to Pollinations when unavailable).
-IMAGE_MODEL = _get("ImageModel", "black-forest-labs/FLUX.1-schnell")
-
-USERNAME = _get("Username", "User")
-ASSISTANT_NAME = _get("Assistantname", "AURA")
-
-# Main model answers and calls tools; the small one only summarizes old history.
-CHAT_MODEL = _get("ChatModel", "openai/gpt-oss-120b")
-# Tried in order when the previous model is rate limited (each has its own tokens-per-minute budget).
-FALLBACK_MODELS = [m.strip() for m in _get("FallbackModels", "openai/gpt-oss-20b,qwen/qwen3.8-27b").split(",") if m.strip()]
-CHAT_MODELS = [CHAT_MODEL] + [m for m in FALLBACK_MODELS if m != CHAT_MODEL]
-SUMMARY_MODEL = _get("SummaryModel", "openai/gpt-oss-20b")
-# Groq counts input + max_tokens against the tokens-per-minute limit (8k on the free tier),
-# so a modest cap keeps requests from waiting on rate limits. Raise it on a paid tier.
-MAX_TOKENS = int(_get("MaxTokens", "1024"))
-
 MEMORY_DB = DATA_DIR / "memory.sqlite"
+
+# Filled in by reload(); listed here so editors and readers know what exists.
+GROQ_API_KEY: str | None = None
+HF_API_KEY: str | None = None
+IMAGE_MODEL = USERNAME = ASSISTANT_NAME = CHAT_MODEL = SUMMARY_MODEL = THEME = ""
+FALLBACK_MODELS: list[str] = []
+CHAT_MODELS: list[str] = []
+MAX_TOKENS = 1024
+FOLLOWUPS = True
+
+
+def reload() -> None:
+    global GROQ_API_KEY, HF_API_KEY, IMAGE_MODEL, USERNAME, ASSISTANT_NAME, CHAT_MODEL, FALLBACK_MODELS
+    global CHAT_MODELS, SUMMARY_MODEL, MAX_TOKENS, THEME, FOLLOWUPS
+    env = dotenv_values(ENV_FILE)
+
+    def get(key: str, default: str | None = None) -> str | None:
+        return os.environ.get(key) or env.get(key) or default
+
+    GROQ_API_KEY = get("GroqAPIKey") or get("GROQ_API_KEY")
+    HF_API_KEY = get("HuggingFaceAPIKey")
+    # Hugging Face text-to-image model (served by its partner providers; falls back to Pollinations when unavailable).
+    IMAGE_MODEL = get("ImageModel", "black-forest-labs/FLUX.1-schnell")
+
+    USERNAME = get("Username", "User")
+    ASSISTANT_NAME = get("Assistantname", "AURA")
+    THEME = get("Theme", "system")  # system | light | dark
+    FOLLOWUPS = get("Followups", "true").lower() != "false"  # gentle check-ins
+
+    # Main model answers and calls tools; the small one only summarizes old history.
+    CHAT_MODEL = get("ChatModel", "openai/gpt-oss-120b")
+    # Tried in order when the previous model is rate limited (each has its own tokens-per-minute budget).
+    FALLBACK_MODELS = [m.strip() for m in get("FallbackModels", "openai/gpt-oss-20b,qwen/qwen3.8-27b").split(",") if m.strip()]
+    CHAT_MODELS = [CHAT_MODEL] + [m for m in FALLBACK_MODELS if m != CHAT_MODEL]
+    SUMMARY_MODEL = get("SummaryModel", "openai/gpt-oss-20b")
+    # Groq counts input + max_tokens against the tokens-per-minute limit (8k on the free tier),
+    # so a modest cap keeps requests from waiting on rate limits. Raise it on a paid tier.
+    MAX_TOKENS = int(get("MaxTokens", "1024"))
+
+
+reload()

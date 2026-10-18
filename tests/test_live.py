@@ -14,19 +14,19 @@ SCENARIO = [
     # (message, expected tool event or None for no tool, check(state) or None)
     ("hey", None, None),
     ("what's the weather in Lahore?", "get_weather", None),
-    ("add buy milk to my list", "tasks:add", lambda s: [t["text"].lower() for t in lists.tasks()] == ["buy milk"]),
+    ("add buy milk to my list", "tasks:add", lambda _: [t["text"].lower() for t in lists.tasks()] == ["buy milk"]),
     ("what's on my list?", "tasks:list", None),
-    ("done with the milk", "tasks:done", lambda s: lists.tasks() == []),
-    ("remind me in 30 minutes to stretch", "reminders:set", lambda s: len(reminders.pending()) == 1),
-    ("cancel it", "reminders:cancel", lambda s: reminders.pending() == []),
-    ("note: cafe wifi is Coffee-5G", "notes:save", lambda s: any("Coffee-5G" in n["text"] for n in lists.notes())),
+    ("done with the milk", "tasks:done", lambda _: lists.tasks() == []),
+    ("remind me in 30 minutes to stretch", "reminders:set", lambda _: len(reminders.pending()) == 1),
+    ("cancel it", "reminders:cancel", lambda _: reminders.pending() == []),
+    ("note: cafe wifi is Coffee-5G", "notes:save", lambda _: any("Coffee-5G" in n["text"] for n in lists.notes())),
     ("what was the cafe wifi?", "notes:search", lambda s: "Coffee-5G" in s["reply"]),
-    ("remember my sister is Sara", "memory:remember", lambda s: any("Sara" in f["text"] for f in memory.facts())),
+    ("remember my sister is Sara", "memory:remember", lambda _: any("Sara" in f["text"] for f in memory.facts())),
     ("what's my sister's name?", None, lambda s: "Sara" in s["reply"]),
     ("open firefox", "app:open", lambda s: any(e[0] == "launch" for e in s["effects"])),
     ("play believer by imagine dragons", "browser:play_youtube", lambda s: any("youtube.com" in str(e) for e in s["effects"])),
     ("save a short haiku about rain in Desktop/poems", "save_document",
-     lambda s: any((tools.HOME / "Desktop" / "poems").glob("*"))),
+     lambda _: any((tools.HOME / "Desktop" / "poems").glob("*"))),
     ("open that folder", "files:open_folder", lambda s: ("open", str(tools.HOME / "Desktop" / "poems")) in s["effects"]),
     ("translate what I copied to english", "clipboard:read", lambda s: "later" in s["reply"].lower()),
     ("what's in my Downloads folder?", "files:list", lambda s: "os_notes" in s["reply"]),
@@ -64,3 +64,14 @@ def test_everyday_conversation(aura_agent, home, side_effects, monkeypatch):
         if re.search(r"#[0-9a-f]{6}\b", state["reply"]):
             failures.append(f"{message!r}: leaked an internal id")
     assert not failures, "\n".join(failures)
+
+
+@pytest.mark.live
+def test_replying_to_a_check_in(aura_agent):
+    # The check-in is the first message of today's chat; the reply must read as a natural continuation.
+    from aura import checkins
+    memory.add_fact("Networks exam on Sat 17 Oct 2026")
+    checkins.deliver(aura_agent, "How did the networks exam go?")
+    reply = "".join(e.text for e in aura_agent.stream("it went really well actually, I think I aced it!") if e.kind == "token")
+    print("reply:", reply)
+    assert any(w in reply.lower() for w in ("great", "awesome", "congrat", "nice", "glad", "amazing", "well done", "fantastic"))

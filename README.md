@@ -40,6 +40,8 @@ Ask questions, get live answers from the web, and let it act on your computer.
 | 🗂️ **Chat history** | Every conversation is kept. A sidebar (Ctrl+B) lists them by day; reopen, rename, delete, or search across all chats. |
 | ✅ **Tasks & notes** | "Add buy charger to my list", "submit the assignment Friday at 5" (also sets a reminder), "done with the charger". Quick notes: "note: café wifi is …", "what was the café wifi?". A panel (✓ in the header) with due dates, an overdue badge and search. |
 | ⏰ **Reminders** | "Remind me in 20 minutes to stretch", "remind me tomorrow at 9:00 to call mum". Desktop notification when due; list and cancel them too. |
+| ⚙️ **Settings** | Change your name, theme, model, reply length, API keys (checked before saving), check-ins, start-at-login and the shortcut from a panel: no file editing. |
+| 💬 **Gentle check-ins** | At most once a day, when you open AURA, a short question about something specific it knows ("How did the networks exam go?"). Most days there's nothing, so nothing appears. Off switch in Settings. |
 | ⌨️ **Global hotkey** | Super+J shows/hides AURA from anywhere (starts it if it isn't running). |
 | 🟢 **Always on** | Starts hidden at login; closing the window keeps it running in the background (Ctrl+Q quits). |
 | ⚡ **Never stalls** | When a model hits Groq's rate limit, AURA switches to another model instantly; if all are busy it shows a countdown. Stop any reply with Esc or the stop button. |
@@ -128,6 +130,8 @@ aura/
 ├── learner.py    # background memory agent that extracts facts from conversations
 ├── lists.py      # tasks (linked to reminders) and notes
 ├── threads.py    # chat history index + search for the sidebar
+├── settings.py   # Settings panel backend: validate, save to .env, reload
+├── checkins.py   # gentle once-a-day check-ins
 ├── ui.py         # Qt window hosting the web UI; agent on a worker thread; single-instance + reminders
 └── web/          # the chat UI: index.html, app.css, app.js + vendored marked, DOMPurify, highlight.js, Inter
 Data/             # memory, reminders, saved documents and images (git-ignored)
@@ -145,6 +149,13 @@ Data/             # memory, reminders, saved documents and images (git-ignored)
 Adding a tool is one decorated function in `aura/tools.py` plus an entry in `TOOLS`.
 
 ---
+
+## 🧪 Tests
+
+```bash
+pytest            # ~50 offline tests in a few seconds: no API calls, isolated data, nothing opens
+pytest --live -s  # also a 17-step everyday conversation against Groq (uses your quota)
+```
 
 ## 🤝 Contributing
 

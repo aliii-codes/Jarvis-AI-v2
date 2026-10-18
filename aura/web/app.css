@@ -469,3 +469,35 @@ kbd { font-family: inherit; font-size: 11px; padding: 0 4px; border: 1px solid v
 }
 .lightbox[hidden] { display: none; }
 .lightbox img { max-width: 92vw; max-height: 90vh; border-radius: 10px; box-shadow: 0 20px 60px rgba(0, 0, 0, .5); }
+
+/* ── settings panel ──────────────────────────────────────── */
+.settings h3:first-child { margin-top: 4px; }
+.settings .switch-row { margin-bottom: 8px; }
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; font-size: 13.5px; }
+.field > span { color: var(--text-2); font-weight: 550; }
+.field em { color: var(--muted); font-style: normal; font-weight: 400; }
+.field input, .field select {
+  height: 36px; padding: 0 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+  color: var(--text); font: inherit; font-size: 14px; outline: none;
+}
+.field input:focus, .field select:focus { border-color: var(--border-strong); }
+.field-hint { color: var(--muted); font-size: 12.5px; margin: -6px 0 14px; }
+.segmented { display: flex; gap: 2px; padding: 3px; background: var(--surface-2); border-radius: 10px; }
+.segmented button { flex: 1; height: 30px; border: none; border-radius: 8px; background: transparent; color: var(--muted);
+                    font-size: 13px; font-weight: 550; cursor: pointer; }
+.segmented button.on { background: var(--bg); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, .15); }
+.key-row { display: flex; gap: 8px; }
+.key-row input { flex: 1; min-width: 0; }
+.key-row button, .secondary-btn {
+  height: 36px; padding: 0 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+  color: var(--text); font-size: 13.5px; font-weight: 550; cursor: pointer;
+}
+.key-row button:hover, .secondary-btn:hover { border-color: var(--border-strong); }
+.key-row button:disabled { opacity: .5; cursor: default; }
+.key-status { color: var(--muted); font-size: 12.5px; min-height: 1em; }
+.key-status.ok { color: #22a35a; }
+.key-status.err { color: var(--danger); }
+
+/* ── gentle check-ins ────────────────────────────────────── */
+.checkin-label { font-size: 12px; font-weight: 600; color: var(--accent); margin-bottom: 4px; letter-spacing: .01em; }
+.msg.checkin .content { font-size: 15.5px; }

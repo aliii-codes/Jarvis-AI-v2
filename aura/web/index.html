@@ -44,6 +44,9 @@
       <button id="memory-btn" class="icon-btn" title="Memory" aria-label="Memory">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9Z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8Z"/></svg>
       </button>
+      <button id="settings-btn" class="icon-btn" title="Settings" aria-label="Settings">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
+      </button>
       <button id="new-chat" class="icon-btn" title="New chat" aria-label="New chat">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
       </button>
@@ -147,6 +150,61 @@
         <ul id="note-list" class="mem-list notes"></ul>
         <p id="notes-empty" class="empty" hidden>No notes yet. Try “note: the café wifi is …”</p>
       </section>
+    </div>
+  </aside>
+  <aside id="settings-panel" class="drawer" aria-label="Settings" aria-hidden="true">
+    <div class="drawer-head">
+      <h2>Settings</h2>
+      <button class="icon-btn drawer-close" aria-label="Close">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="drawer-body settings">
+      <h3>Profile</h3>
+      <label class="field"><span>Your name</span><input data-setting="username" autocomplete="off"></label>
+      <label class="field"><span>Assistant name</span><input data-setting="assistant_name" autocomplete="off"></label>
+
+      <h3>Appearance</h3>
+      <div class="field"><span>Theme</span>
+        <div class="segmented" data-setting="theme">
+          <button type="button" data-value="system">System</button><button type="button" data-value="light">Light</button><button type="button" data-value="dark">Dark</button>
+        </div>
+      </div>
+
+      <h3>AI</h3>
+      <label class="field"><span>Model</span><select data-setting="chat_model"></select></label>
+      <div class="field"><span>Reply length</span>
+        <div class="segmented" data-setting="reply_length">
+          <button type="button" data-value="short">Short</button><button type="button" data-value="normal">Normal</button><button type="button" data-value="long">Long</button>
+        </div>
+      </div>
+      <p class="field-hint">Longer replies use more of Groq's free per-minute limit.</p>
+      <form class="field key-field" data-key="groq_key"><span>Groq API key</span>
+        <div class="key-row"><input type="password" placeholder="Paste a new key" autocomplete="off"><button type="submit">Save</button></div>
+        <small class="key-status"></small>
+      </form>
+
+      <h3>Images</h3>
+      <form class="field key-field" data-key="hf_key"><span>Hugging Face key <em>(optional, better images)</em></span>
+        <div class="key-row"><input type="password" placeholder="hf_…" autocomplete="off"><button type="submit">Save</button></div>
+        <small class="key-status"></small>
+      </form>
+
+      <h3>Companion</h3>
+      <label class="switch-row"><span><b>Learn from conversations</b><small>Remembers lasting facts about you</small></span>
+        <input type="checkbox" data-setting="learning"><span class="switch" aria-hidden="true"></span></label>
+      <label class="switch-row"><span><b>Gentle check-ins</b><small>At most once a day, e.g. “How did the exam go?”</small></span>
+        <input type="checkbox" data-setting="followups"><span class="switch" aria-hidden="true"></span></label>
+
+      <h3>System</h3>
+      <label class="switch-row"><span><b>Start at login</b><small>Runs in the background so reminders work</small></span>
+        <input type="checkbox" data-setting="autostart"><span class="switch" aria-hidden="true"></span></label>
+      <label class="switch-row"><span><b>Global shortcut</b><small id="hotkey-label">Super+J shows or hides the window</small></span>
+        <input type="checkbox" data-setting="hotkey"><span class="switch" aria-hidden="true"></span></label>
+
+      <h3>Data</h3>
+      <p class="field-hint">Chats, memory, tasks and images are stored only on this computer.</p>
+      <button id="open-data" class="secondary-btn" type="button">Open data folder</button>
     </div>
   </aside>
   <div id="toast" class="toast" hidden></div>

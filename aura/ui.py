@@ -1,5 +1,6 @@
 """Desktop window: a local web page (aura/web) rendered by QtWebEngine, driven over QWebChannel."""
 import json
+import time
 from pathlib import Path
 import shutil
 import subprocess
@@ -13,7 +14,7 @@ from PyQt5.QtWebChannel import QWebChannel
 from PyQt5.QtWebEngineWidgets import QWebEnginePage, QWebEngineView
 from PyQt5.QtWidgets import QApplication, QMainWindow, QShortcut
 
-from . import config, instance, learner, lists, memory, reminders, threads, tools
+from . import checkins, config, instance, learner, lists, memory, reminders, settings, threads, tools
 from .agent import Aura
 
 WEB_DIR = config.ROOT / "aura" / "web"
@@ -75,6 +76,11 @@ TOOL_LABELS = {
 }
 
 
+def effective_theme() -> str:
+    """The theme setting, with "system" resolved to light or dark."""
+    return config.THEME if config.THEME in ("light", "dark") else system_theme()
+
+
 def system_theme() -> str:
     """'dark' or 'light', following GNOME's setting, else the Qt palette."""
     if shutil.which("gsettings"):
@@ -116,6 +122,21 @@ class Worker(QThread):
                     self.stopped = True
         except Exception as e:
             self.failed.emit(f"{type(e).__name__}: {e}")
+
+
+class Task(QThread):
+    """Run a blocking call (network: model list, key check) off the UI thread."""
+    done = pyqtSignal(object, object)  # (result, error)
+
+    def __init__(self, fn):
+        super().__init__()
+        self.fn = fn
+
+    def run(self):
+        try:
+            self.done.emit(self.fn(), None)
+        except Exception as e:
+            self.done.emit(None, e)
 
 
 class LearnWorker(QThread):
@@ -169,6 +190,9 @@ class WebBridge(QObject):
     threads = pyqtSignal(str)        # {"threads": [...], "current": id} for the history sidebar
     searchResults = pyqtSignal(str)
     lists = pyqtSignal(str)          # tasks & notes snapshot (+ count for the header badge)
+    settings = pyqtSignal(str)
+    settingResult = pyqtSignal(str, bool, str)  # (setting, ok, message)
+    checkin = pyqtSignal(str)        # a gentle check-in added to the current chat
     failed = pyqtSignal(str)
     note = pyqtSignal(str, str)
 
@@ -242,6 +266,37 @@ class WebBridge(QObject):
     def deleteNote(self, key: str):
         lists.delete_note(key)
         self._push_lists()
+
+    # Settings panel (blocking work like checking a key runs on a background Task).
+    def _run(self, fn, on_done):
+        task = Task(fn)
+        task.done.connect(on_done)
+        task.finished.connect(lambda: self.window.tasks.remove(task))
+        self.window.tasks.append(task)
+        task.start()
+
+    @pyqtSlot()
+    def getSettings(self):
+        self._run(settings.snapshot, lambda snap, err: snap and self.settings.emit(json.dumps(snap)))
+
+    @pyqtSlot(str, str)
+    def saveSetting(self, name: str, value_json: str):
+        value = json.loads(value_json)
+
+        def done(result, err):
+            if err:
+                self.settingResult.emit(name, False, str(err) if isinstance(err, ValueError) else f"Couldn't save: {err}")
+                return
+            message, rebuild = result
+            self.window.after_setting(name, rebuild)
+            self.settingResult.emit(name, True, message)
+            self.getSettings()
+
+        self._run(lambda: settings.apply(name, value), done)
+
+    @pyqtSlot()
+    def openDataFolder(self):
+        tools.open_path(str(config.DATA_DIR))
 
     # Chat history sidebar.
     @pyqtSlot()
@@ -361,7 +416,11 @@ class ChatWindow(QMainWindow):
         self.resize(900, 820)
         self.setMinimumSize(420, 520)
         self.worker: Worker | None = None
-        self.theme = system_theme()
+        self.tasks: list[Task] = []
+        self.rebuild_pending = False
+        self.checkin_running = False
+        self.last_activity = 0.0  # time of the last turn; check-ins wait until the user has been quiet a bit
+        self.theme = effective_theme()
 
         self.aura, self.startup_error = None, ""
         try:
@@ -401,12 +460,44 @@ class ChatWindow(QMainWindow):
         quit_shortcut.setContext(Qt.ApplicationShortcut)
         quit_shortcut.activated.connect(self.quit)
 
-    def page_ready(self):
-        """The page has connected to the bridge: send settings and the saved conversation."""
+    def send_init(self):
         self.web.init.emit(json.dumps({
             "assistant": config.ASSISTANT_NAME, "user": config.USERNAME,
             "theme": self.theme, "error": self.startup_error,
         }))
+
+    def after_setting(self, name: str, rebuild: bool):
+        """Apply a saved setting to the running app."""
+        if name in ("username", "assistant_name", "theme"):
+            self.theme = effective_theme()
+            self.view.page().setBackgroundColor(QColor(BACKGROUND[self.theme]))
+            self.setStyleSheet(f"QMainWindow {{ background: {BACKGROUND[self.theme]}; }}")
+            self.setWindowTitle(config.ASSISTANT_NAME)
+            self.send_init()
+        if name in ("learning",):
+            self.web.memory.emit(json.dumps(memory.snapshot()))
+        if rebuild:
+            if self.worker:
+                self.rebuild_pending = True  # don't pull the agent out from under a reply in progress
+            else:
+                self.rebuild_agent()
+
+    def rebuild_agent(self):
+        """Recreate the agent with the current settings (model, key, reply length); same conversation."""
+        self.rebuild_pending = False
+        try:
+            self.aura = Aura()
+            if self.startup_error:  # e.g. the first working key was just saved
+                self.startup_error = ""
+                self.send_init()
+                self.web.history.emit(_history_json(self.aura))
+                self.push_threads()
+        except Exception as e:
+            self.web.failed.emit(f"Couldn't apply the new settings: {e}")
+
+    def page_ready(self):
+        """The page has connected to the bridge: send settings and the saved conversation."""
+        self.send_init()
         self.web.history.emit(_history_json(self.aura))
         self.push_threads()
         self.web.lists.emit(json.dumps(lists.snapshot()))
@@ -435,6 +526,9 @@ class ChatWindow(QMainWindow):
     def _on_finished(self):
         stopped = self.worker.stopped
         self.worker = None
+        self.last_activity = time.monotonic()
+        if self.rebuild_pending:
+            self.rebuild_agent()
         self.web.turnDone.emit(stopped)
         self.push_threads()  # a new chat appears / the current one moves to the top
         self.web.lists.emit(json.dumps(lists.snapshot()))  # the agent may have changed tasks or notes
@@ -460,7 +554,27 @@ class ChatWindow(QMainWindow):
             self.web.memorySaved.emit(json.dumps(changes))
         self.web.memory.emit(json.dumps(memory.snapshot()))
 
+    def maybe_checkin(self):
+        """At most once a day, when the user is looking at an idle AURA, maybe ask about something specific."""
+        if (not self.aura or not self.page_is_ready or not self.isVisible() or self.worker or self.checkin_running
+                or time.monotonic() - self.last_activity < 180 or not checkins.due()):
+            return
+        self.checkin_running = True
+
+        def done(message, err):
+            self.checkin_running = False
+            if err or not message or self.worker:  # best-effort: skip quietly (and never interrupt a reply)
+                return
+            if checkins.deliver(self.aura, message):  # started a new chat for today
+                self.web.history.emit(_history_json(self.aura))
+                self.push_threads()
+            else:
+                self.web.checkin.emit(message)
+
+        self.web._run(checkins.generate, done)
+
     def _fire_reminders(self):
+        self.maybe_checkin()
         self._ticks = getattr(self, "_ticks", 0) + 1
         if self.page_is_ready and self._ticks % 4 == 0:  # once a minute: due/overdue badge stays current
             self.web.lists.emit(json.dumps(lists.snapshot()))
@@ -509,6 +623,7 @@ class ChatWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
         self.view.setFocus()
+        QTimer.singleShot(1500, self.maybe_checkin)  # the user just opened AURA
         self.view.page().runJavaScript("window.focusInput && focusInput()")
 
 

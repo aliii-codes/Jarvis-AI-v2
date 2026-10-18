@@ -162,6 +162,12 @@ def _retry_after(err: groq.RateLimitError) -> float:
 TRANSIENT = (groq.APIConnectionError, groq.APITimeoutError, groq.InternalServerError)
 
 
+def _bad_tool_call(err: Exception) -> bool:
+    """Groq rejects a reply that calls a tool that wasn't offered (e.g. a made-up "translate").
+    It's a model slip, not a real failure: asking again usually works."""
+    return isinstance(err, groq.APIError) and "tool call validation failed" in str(err).lower()
+
+
 def _rate_limit_fallback(models: list[ChatGroq], cancelled: threading.Event):
     """Each Groq model has its own tokens-per-minute budget: on a 429, try the next model right away.
     Only if every model is limited, wait (visibly, and cancellably) for the soonest one to free up.
@@ -178,12 +184,23 @@ def _rate_limit_fallback(models: list[ChatGroq], cancelled: threading.Event):
                 try:
                     if i:
                         status({"status": f"busy · using {model.model_name.split('/')[-1]}"})
-                    return handler(request.override(model=model))
+                    try:
+                        return handler(request.override(model=model))
+                    except groq.APIError as err:
+                        if not _bad_tool_call(err):
+                            raise
+                        return handler(request.override(model=model))  # one more try; a second slip falls through
                 except groq.RateLimitError as err:
                     limited = True
                     waits.append(_retry_after(err))
                 except TRANSIENT:
                     waits.append(2.0 * (attempt + 1))  # short backoff: 2s, 4s, 6s...
+                except groq.APIError as err:
+                    if not _bad_tool_call(err):
+                        raise
+                    continue  # this model keeps inventing tools: try the next one
+            if not waits:  # every model failed with a bad tool call: one last try raises the real error
+                break
             wait = min(waits) + 0.5
             reason = "rate limited" if limited else "connection problem"
             status({"status": f"{reason} · retrying in {wait:.0f}s"})
@@ -336,7 +353,8 @@ class Aura:
             if isinstance(msg, HumanMessage) and not _is_summary(msg):
                 out.append(("user", msg.content))
             elif isinstance(msg, AIMessage) and msg.content:
-                out.append(("assistant", _plain(msg.content)))
+                role = "checkin" if msg.additional_kwargs.get("aura_checkin") else "assistant"
+                out.append((role, _plain(msg.content)))
             elif isinstance(msg, ToolMessage) and (image := _image_of(msg)):
                 out.append(("image", image))
         return out
