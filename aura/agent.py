@@ -58,6 +58,15 @@ def _image_of(msg: ToolMessage) -> str | None:
     return path if path and Path(path).is_file() and Path(path).resolve().is_relative_to(images) else None
 
 
+# gpt-oss likes typographic look-alikes (non-breaking hyphen U+2011, narrow no-break space U+202F...).
+# They look fine but break copy-paste: a copied "Coffee‑5G" wifi password wouldn't work. Use plain ones.
+_PLAIN = str.maketrans({"\u2010": "-", "\u2011": "-", "\u2012": "-", "\u00a0": " ", "\u202f": " ", "\u2007": " "})
+
+
+def _plain(text: str) -> str:
+    return text.translate(_PLAIN)
+
+
 def _is_summary(msg: BaseMessage) -> bool:
     return msg.additional_kwargs.get("lc_source") == "summarization"
 
@@ -277,7 +286,7 @@ class Aura:
                             partial.clear()
                         had_text, after_tool = True, False
                         partial.append(chunk.content)
-                        yield Event("token", chunk.content)
+                        yield Event("token", _plain(chunk.content))
                 elif mode == "updates":
                     for node, update in payload.items():
                         if not isinstance(update, dict):
@@ -294,7 +303,7 @@ class Aura:
                                     yield Event("image", image)
                             elif isinstance(msg, AIMessage) and msg.content:
                                 # e.g. the call-limit middleware's message; not streamed as tokens
-                                yield Event("token", ("\n\n" if had_text else "") + msg.content)
+                                yield Event("token", ("\n\n" if had_text else "") + _plain(msg.content))
                                 had_text = True
         except Cancelled:
             stream.close()
@@ -327,7 +336,7 @@ class Aura:
             if isinstance(msg, HumanMessage) and not _is_summary(msg):
                 out.append(("user", msg.content))
             elif isinstance(msg, AIMessage) and msg.content:
-                out.append(("assistant", msg.content))
+                out.append(("assistant", _plain(msg.content)))
             elif isinstance(msg, ToolMessage) and (image := _image_of(msg)):
                 out.append(("image", image))
         return out

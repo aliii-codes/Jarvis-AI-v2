@@ -19,7 +19,6 @@ from .agent import Aura
 WEB_DIR = config.ROOT / "aura" / "web"
 LEARN_AFTER_IDLE_MS = 45_000  # learn once the user pauses, so it doesn't compete with chat for rate limits
 BACKGROUND = {"dark": "#0e0e11", "light": "#ffffff"}  # matches app.css, avoids a white flash on load
-IMAGES_DIR = config.DATA_DIR / "images"
 
 
 def _file_url(path: str) -> str:
@@ -37,7 +36,7 @@ def _history_json(aura: Aura | None) -> str:
 def _generated_image(path: str) -> Path | None:
     """Only files AURA generated (inside Data/images) may be opened or copied from the page."""
     p = Path(path).resolve()
-    return p if p.is_file() and p.is_relative_to(IMAGES_DIR.resolve()) else None
+    return p if p.is_file() and p.is_relative_to((config.DATA_DIR / "images").resolve()) else None
 
 # (while running, when done) — shown as chips under the user's message.
 TOOL_LABELS = {
