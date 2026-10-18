@@ -34,7 +34,7 @@ Ask questions, get live answers from the web, and let it act on your computer.
 | 🖥️ **Apps & websites** | Open or close desktop apps, open websites. |
 | 🎵 **YouTube** | "play believer" finds the track and opens it. |
 | 🔊 **Volume** | Mute, unmute, up, down. |
-| 📝 **Writing** | Emails, letters, essays, code: written, saved and opened in your editor. |
+| 📝 **Writing** | Emails, letters, essays, code: written, saved where you say ("in Downloads", "in a new folder on my Desktop"; missing folders are created, never outside your home folder, never overwriting) and opened. "Open that folder" opens it in your file manager. |
 | 📋 **Clipboard** | "Translate what I copied", "copy that email to my clipboard". |
 | 📁 **Files** | Find, list and read files and PDFs in your home folder ("summarize ~/Downloads/report.pdf"). Access outside your home folder is refused. |
 | 🗂️ **Chat history** | Every conversation is kept. A sidebar (Ctrl+B) lists them by day; reopen, rename, delete, or search across all chats. |

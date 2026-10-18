@@ -57,9 +57,17 @@ def _pdf_text(data: bytes) -> str:
     return "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(data)).pages)
 
 
+def _expand(path: str) -> Path:
+    """'~/x' -> HOME/x. (Not Path.expanduser, so '~' always means the same HOME the safety check uses.)"""
+    path = path.strip()
+    if path == "~" or path.startswith("~/"):
+        return HOME / path[2:]
+    return Path(path)
+
+
 def _in_home(path: str) -> Path:
     """Resolve a user-supplied path, refusing anything outside the home folder."""
-    p = Path(path).expanduser()
+    p = _expand(path)
     p = (p if p.is_absolute() else HOME / p).resolve()
     if not p.is_relative_to(HOME):
         raise PermissionError(f"Only files inside {HOME} can be accessed.")
@@ -164,16 +172,68 @@ def set_volume(action: Literal["mute", "unmute", "up", "down"]) -> str:
     return f"Volume {action}."
 
 
+_XDG_DIRS = {"desktop": "DESKTOP", "downloads": "DOWNLOAD", "download": "DOWNLOAD", "documents": "DOCUMENTS",
+             "pictures": "PICTURES", "music": "MUSIC", "videos": "VIDEOS"}
+_TEXT_EXTENSIONS = {".txt", ".md", ".py", ".js", ".ts", ".html", ".css", ".json", ".csv", ".tex", ".sh", ".yaml",
+                    ".yml", ".xml", ".sql", ".c", ".cpp", ".h", ".java", ".rs", ".go", ".rb", ".php", ".ini", ".toml"}
+
+
+def _resolve_folder(folder: str) -> Path:
+    """'Downloads/Sick leave', '~/Desktop', 'Documents' -> a path inside home (standard folders via xdg-user-dir)."""
+    folder = folder.strip().replace("\\", "/")
+    if folder.startswith("~/"):
+        folder = folder[2:]  # "~/Downloads" is the same as "Downloads"
+    parts = Path(folder).parts
+    if parts and not Path(folder).is_absolute() and parts[0].lower() in _XDG_DIRS and shutil.which("xdg-user-dir"):
+        base = subprocess.run(["xdg-user-dir", _XDG_DIRS[parts[0].lower()]], capture_output=True, text=True).stdout.strip()
+        if base:
+            return _in_home(str(Path(base, *parts[1:])))
+    return _in_home(folder)
+
+
+def _safe_filename(title: str) -> str:
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', " ", title)
+    return " ".join(name.split()).strip(" .")[:80] or "Untitled"
+
+
+def _unique(path: Path) -> Path:
+    """Never overwrite: 'Letter.txt' -> 'Letter (2).txt' if it already exists."""
+    if not path.exists():
+        return path
+    n = 2
+    while (candidate := path.with_name(f"{path.stem} ({n}){path.suffix}")).exists():
+        n += 1
+    return candidate
+
+
 @tool
-def save_document(title: str, content: str) -> str:
-    """Save text you wrote (an email, letter, essay, code, notes...) to a file and open it
-    in the user's text editor. Write the full content yourself, then call this."""
-    docs = config.DATA_DIR / "documents"
-    docs.mkdir(exist_ok=True)
-    path = docs / f"{_slug(re.sub(r'\.\w{1,4}$', '', title))}.txt"  # model sometimes includes ".txt"
+def save_document(title: str, content: str, folder: str = "") -> str:
+    """Save text you wrote (an email, letter, essay, code, notes...) to a file and open it.
+    Write the full content yourself, then call this.
+    `folder`: where the user asked to save it, relative to their home or starting with ~, e.g. "Downloads",
+    "Desktop/Sick leave", "~/Documents/uni" (missing folders are created). Leave empty if they didn't say.
+    `title` becomes the file name; include an extension for code or Markdown (e.g. "app.py", "notes.md")."""
+    target = _resolve_folder(folder) if folder.strip() else config.DATA_DIR / "documents"
+    target.mkdir(parents=True, exist_ok=True)
+    name = _safe_filename(title)
+    if Path(name).suffix.lower() not in _TEXT_EXTENSIONS:
+        name += ".txt"
+    path = _unique(target / name)
     path.write_text(content, encoding="utf-8")
     open_path(str(path))
-    return f"Saved and opened {path}."
+    return f"Saved and opened {path}"
+
+
+@tool
+def open_folder(path: str) -> str:
+    """Open a folder in the file manager (e.g. after saving a file: "open that folder"). Path inside home."""
+    folder = _resolve_folder(path)
+    if folder.is_file():
+        folder = folder.parent
+    if not folder.is_dir():
+        return f"{folder} doesn't exist."
+    open_path(str(folder))
+    return f"Opened {folder} in the file manager."
 
 
 _hf_images_unavailable = False  # set after a credits/availability failure, so we don't retry it every time
@@ -473,7 +533,7 @@ def quit_aura() -> str:
 
 
 TOOLS = [web_search, read_url, get_weather, open_app, close_app, open_website, search_in_browser,
-         play_on_youtube, set_volume, save_document, generate_image,
+         play_on_youtube, set_volume, save_document, open_folder, generate_image,
          read_clipboard, copy_to_clipboard, list_folder, find_files, read_file,
          set_reminder, list_reminders, cancel_reminder, remember, forget, recall,
          add_task, list_tasks, complete_task, delete_task, save_note, search_notes, delete_note, quit_aura]

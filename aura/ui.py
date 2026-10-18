@@ -31,6 +31,7 @@ TOOL_LABELS = {
     "play_on_youtube": ("Finding on YouTube", "Opened YouTube"),
     "set_volume": ("Changing volume", "Changed volume"),
     "save_document": ("Saving document", "Saved document"),
+    "open_folder": ("Opening folder", "Opened folder"),
     "generate_image": ("Generating image", "Generated image"),
     "read_clipboard": ("Reading clipboard", "Read clipboard"),
     "copy_to_clipboard": ("Copying", "Copied to clipboard"),
