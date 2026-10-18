@@ -19,7 +19,9 @@ from ddgs import DDGS
 from langchain_core.tools import tool
 from pypdf import PdfReader
 
-from . import config, lists, memory, reminders
+from . import config, lists
+from . import memory as memory_store  # the `memory` and `reminders` names are tools below
+from . import reminders as reminder_store
 
 IS_WINDOWS = platform.system() == "Windows"
 IS_MAC = platform.system() == "Darwin"
@@ -96,8 +98,7 @@ def get_weather(city: str) -> str:
             f"wind {now['windspeedKmph']} km/h. Today: min {today['mintempC']}°C, max {today['maxtempC']}°C.")
 
 
-@tool
-def open_app(name: str) -> str:
+def _open_app(name: str) -> str:
     """Open a desktop application installed on this computer, e.g. "firefox", "spotify", "code"."""
     if IS_WINDOWS:
         from AppOpener import open as appopen
@@ -111,8 +112,7 @@ def open_app(name: str) -> str:
     return f"Opened {name}."
 
 
-@tool
-def close_app(name: str) -> str:
+def _close_app(name: str) -> str:
     """Close a running desktop application by name."""
     if IS_WINDOWS:
         from AppOpener import close
@@ -123,8 +123,7 @@ def close_app(name: str) -> str:
     return f"Closed {name}."
 
 
-@tool
-def open_website(url: str) -> str:
+def _open_website(url: str) -> str:
     """Open a website in the user's browser. Accepts a full URL or a domain like "github.com"."""
     if not re.match(r"^https?://", url):
         url = "https://" + url
@@ -132,8 +131,7 @@ def open_website(url: str) -> str:
     return f"Opened {url} in the browser."
 
 
-@tool
-def search_in_browser(query: str, site: Literal["google", "youtube"] = "google") -> str:
+def _search_in_browser(query: str, site: Literal["google", "youtube"] = "google") -> str:
     """Open a Google or YouTube search results page in the user's browser.
     Use this only when the user wants to see the results themselves; use web_search to answer questions."""
     base = "https://www.youtube.com/results?search_query=" if site == "youtube" else "https://www.google.com/search?q="
@@ -141,8 +139,7 @@ def search_in_browser(query: str, site: Literal["google", "youtube"] = "google")
     return f"Opened {site} search for '{query}'."
 
 
-@tool
-def play_on_youtube(query: str) -> str:
+def _play_on_youtube(query: str) -> str:
     """Play a song or video on YouTube: finds the best match and opens it in the browser."""
     url = f"https://www.youtube.com/results?search_query={quote_plus(query)}"
     html = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=10).text
@@ -224,8 +221,7 @@ def save_document(title: str, content: str, folder: str = "") -> str:
     return f"Saved and opened {path}"
 
 
-@tool
-def open_folder(path: str) -> str:
+def _open_folder(path: str) -> str:
     """Open a folder in the file manager (e.g. after saving a file: "open that folder"). Path inside home."""
     folder = _resolve_folder(path)
     if folder.is_file():
@@ -322,24 +318,21 @@ def read_url(url: str) -> str:
     return _truncate(f"{title}\n\n" + "\n".join(line for line in lines if line))
 
 
-@tool
-def read_clipboard() -> str:
+def _read_clipboard() -> str:
     """Get the text currently in the user's clipboard (what they just copied)."""
     from PyQt5.QtWidgets import QApplication
     text = ui_call(lambda: QApplication.clipboard().text())
     return _truncate(text) if text else "The clipboard is empty."
 
 
-@tool
-def copy_to_clipboard(text: str) -> str:
+def _copy_to_clipboard(text: str) -> str:
     """Put text into the user's clipboard so they can paste it."""
     from PyQt5.QtWidgets import QApplication
     ui_call(lambda: QApplication.clipboard().setText(text))
     return "Copied to clipboard."
 
 
-@tool
-def list_folder(path: str = "~") -> str:
+def _list_folder(path: str = "~") -> str:
     """List the files and folders in a directory inside the user's home folder (e.g. "~/Downloads")."""
     folder = _in_home(path)
     entries = sorted((e for e in folder.iterdir() if not e.name.startswith(".")),
@@ -350,13 +343,13 @@ def list_folder(path: str = "~") -> str:
             lines.append(f"{e.name}/")
         else:
             st = e.stat()
-            lines.append(f"{e.name}  ({st.st_size / 1024:.0f} KB, modified {datetime.fromtimestamp(st.st_mtime):%Y-%m-%d})")
+            size = f"{st.st_size} bytes" if st.st_size < 1024 else f"{st.st_size / 1024:.0f} KB"
+            lines.append(f"{e.name}  ({size}, modified {datetime.fromtimestamp(st.st_mtime):%Y-%m-%d})")
     more = f"\n...and {len(entries) - 100} more" if len(entries) > 100 else ""
     return f"{folder}:\n" + ("\n".join(lines) or "(empty)") + more
 
 
-@tool
-def find_files(name: str, folder: str = "~") -> str:
+def _find_files(name: str, folder: str = "~") -> str:
     """Find files by name inside the user's home folder. `name` is part of the file name
     or a glob like "*.pdf". Returns up to 25 matching paths, newest first."""
     root = _in_home(folder)
@@ -374,8 +367,7 @@ def find_files(name: str, folder: str = "~") -> str:
     return "\n".join(str(p) for p in matches[:25])
 
 
-@tool
-def read_file(path: str) -> str:
+def _read_file(path: str) -> str:
     """Read a text file or PDF inside the user's home folder (notes, code, documents, logs...)."""
     p = _in_home(path)
     data = p.read_bytes()
@@ -386,8 +378,7 @@ def read_file(path: str) -> str:
     return _truncate(data.decode("utf-8", errors="replace"))
 
 
-@tool
-def set_reminder(message: str, at: str = "", in_minutes: float = 0) -> str:
+def _set_reminder(message: str, at: str = "", in_minutes: float = 0) -> str:
     """Remind the user about something later with a desktop notification.
     Give either `in_minutes` (e.g. 20) or `at` as a local date-time "YYYY-MM-DD HH:MM"."""
     if in_minutes:
@@ -398,70 +389,64 @@ def set_reminder(message: str, at: str = "", in_minutes: float = 0) -> str:
         return "Specify when: either in_minutes or at."
     if due_at <= datetime.now():
         return f"{due_at:%Y-%m-%d %H:%M} is in the past; pick a future time."
-    rid = reminders.add(message, due_at)
+    rid = reminder_store.add(message, due_at)
     return f"Reminder #{rid} set for {due_at:%A %d %B, %H:%M}: {message}"
 
 
-@tool
-def list_reminders() -> str:
+def _list_reminders() -> str:
     """List upcoming reminders with their ids."""
-    items = reminders.pending()
+    items = reminder_store.pending()
     if not items:
         return "No upcoming reminders."
     return "\n".join(f"#{i} {due:%a %d %b %H:%M}: {msg}" for i, msg, due in items)
 
 
-@tool
-def cancel_reminder(reminder_id: int) -> str:
+def _cancel_reminder(reminder_id: int) -> str:
     """Cancel an upcoming reminder by its id (see list_reminders)."""
-    return f"Cancelled reminder #{reminder_id}." if reminders.cancel(reminder_id) else f"No upcoming reminder #{reminder_id}."
+    return f"Cancelled reminder #{reminder_id}." if reminder_store.cancel(reminder_id) else f"No upcoming reminder #{reminder_id}."
 
 
 def _best_match(text: str) -> dict | None:
-    want = memory._words(text)
-    scored = sorted(((len(want & memory._words(f["text"])), f) for f in memory.facts()), key=lambda s: -s[0])
+    want = memory_store._words(text)
+    scored = sorted(((len(want & memory_store._words(f["text"])), f) for f in memory_store.facts()), key=lambda s: -s[0])
     return scored[0][1] if scored and scored[0][0] else None
 
 
-@tool
-def remember(fact: str, replaces: str = "") -> str:
+def _remember(fact: str, replaces: str = "") -> str:
     """Save something about the user to long-term memory: when they ask you to remember it, or tell you
     something lasting that changed (moved city, new job). Write a short statement without their name
     and with absolute dates ("Has a cat named Mochi", "Moved to Islamabad in Oct 2026", never "last week"). If it updates something you already know,
     put the old fact's text in `replaces` so it's corrected instead of duplicated."""
     old = _best_match(replaces) if replaces else None
     if old:
-        memory.edit_fact(old["id"], fact)
+        memory_store.edit_fact(old["id"], fact)
         return f"Updated memory: {old['text']} -> {fact}"
-    return f"Remembered: {fact}" if memory.add_fact(fact) else "That's already in memory."
+    return f"Remembered: {fact}" if memory_store.add_fact(fact) else "That's already in memory."
 
 
-@tool
-def forget(what: str) -> str:
+def _forget(what: str) -> str:
     """Remove something from long-term memory when the user asks you to forget it.
     `what` describes the fact; the closest matching saved fact is deleted."""
     fact = _best_match(what)
     if not fact:
         return "Nothing in memory matches that."
-    memory.delete_fact(fact["id"])
+    memory_store.delete_fact(fact["id"])
     return f"Forgot: {fact['text']}"
 
 
-@tool
-def recall(query: str) -> str:
+def _recall(query: str) -> str:
     """Search long-term memory, including notes from past days that aren't in your context,
     e.g. "what did I work on last week", "when is my exam"."""
-    hits = memory.search(query)
+    hits = memory_store.search(query)
     return "\n".join(hits) if hits else "Nothing in memory about that."
 
 
 def _task_line(t: dict) -> str:
     due = f" (due {t['due_label']}{', OVERDUE' if t['overdue'] else ''})" if t.get("due") else ""
-    return f"#{t['id']} {'[done] ' if t['done'] else ''}{t['text']}{due}"
+    return f"{'[done] ' if t['done'] else ''}{t['text']}{due}"
 
 
-@tool
-def add_task(text: str, due: str = "") -> str:
+def _add_task(text: str, due: str = "") -> str:
     """Add a to-do to the user's task list ("add buy charger to my list", "I need to submit the report by Friday").
     `due` is optional: "YYYY-MM-DD", or "YYYY-MM-DD HH:MM" to also get a reminder at that time."""
     task = lists.add_task(text, due)
@@ -471,15 +456,13 @@ def add_task(text: str, due: str = "") -> str:
     return f"{verb}: {_task_line(task)}.{extra}"
 
 
-@tool
-def list_tasks(include_done: bool = False) -> str:
+def _list_tasks(include_done: bool = False) -> str:
     """Show the user's open tasks (to-do list), with ids and due dates."""
     items = lists.tasks(include_done=include_done)
     return "\n".join(_task_line(t) for t in items) if items else "The task list is empty."
 
 
-@tool
-def complete_task(task: str) -> str:
+def _complete_task(task: str) -> str:
     """Mark a task as done. `task` is its id (e.g. "#a1b2c3") or a few words from it."""
     match = lists.find_task(task)
     if not match:
@@ -488,8 +471,7 @@ def complete_task(task: str) -> str:
     return f"Completed: {match['text']}"
 
 
-@tool
-def delete_task(task: str) -> str:
+def _delete_task(task: str) -> str:
     """Remove a task entirely (not completed, just deleted). `task` is its id or a few words from it."""
     match = lists.find_task(task, include_done=True)
     if not match:
@@ -498,26 +480,23 @@ def delete_task(task: str) -> str:
     return f"Deleted task: {match['text']}"
 
 
-@tool
-def save_note(text: str) -> str:
+def _save_note(text: str) -> str:
     """Save a quick note the user wants to keep and look up later (a wifi password, a code, an idea,
     a parking spot, a book recommendation). For facts about the user themselves, use remember instead;
     for long documents, use save_document."""
     note = lists.add_note(text)
-    return f"Saved note #{note['id']}."
+    return "Saved the note."
 
 
-@tool
-def search_notes(query: str = "") -> str:
+def _search_notes(query: str = "") -> str:
     """Look up the user's saved notes by keywords (empty query returns the latest notes)."""
     found = lists.search_notes(query)
     if not found:
         return "No notes match that."
-    return "\n\n".join(f"#{n['id']} ({n['created'][:10]}): {n['text']}" for n in found)
+    return "\n\n".join(f"({n['created'][:10]}) {n['text']}" for n in found)
 
 
-@tool
-def delete_note(note: str) -> str:
+def _delete_note(note: str) -> str:
     """Delete a saved note by its id (e.g. "#a1b2c3") or by keywords from it."""
     key = note.strip().lstrip("#")
     target = next((n for n in lists.notes() if n["id"] == key), None) or next(iter(lists.search_notes(note, 1)), None)
@@ -534,8 +513,94 @@ def quit_aura() -> str:
     return "Closing."
 
 
-TOOLS = [web_search, read_url, get_weather, open_app, close_app, open_website, search_in_browser,
-         play_on_youtube, set_volume, save_document, open_folder, generate_image,
-         read_clipboard, copy_to_clipboard, list_folder, find_files, read_file,
-         set_reminder, list_reminders, cancel_reminder, remember, forget, recall,
-         add_task, list_tasks, complete_task, delete_task, save_note, search_notes, delete_note, quit_aura]
+# ── merged tools ─────────────────────────────────────────────────────────
+# Related actions share one tool: every tool description is sent with every request, so fewer, broader
+# tools cost far fewer tokens (31 separate tools were ~1,500 tokens per request).
+
+@tool
+def app(action: Literal["open", "close"], name: str) -> str:
+    """Open or close a desktop application, e.g. "firefox", "spotify", "code"."""
+    return _open_app(name) if action == "open" else _close_app(name)
+
+
+@tool
+def browser(action: Literal["open_website", "google", "youtube_search", "play_youtube"], target: str) -> str:
+    """Use the user's web browser: open_website (URL or domain), google / youtube_search (show results
+    for the user to browse), play_youtube (find a song or video and play it). To answer a question
+    yourself, use web_search instead."""
+    if action == "open_website":
+        return _open_website(target)
+    if action == "play_youtube":
+        return _play_on_youtube(target)
+    return _search_in_browser(target, "youtube" if action == "youtube_search" else "google")
+
+
+@tool
+def files(action: Literal["list", "find", "read", "open_folder"], path: str = "~", name: str = "") -> str:
+    """Files in the user's home folder. list: a folder's contents. find: files whose name contains `name`
+    (or a glob like "*.pdf") under `path`. read: a text file or PDF at `path`. open_folder: show `path` in
+    the file manager. Paths are relative to home or start with ~."""
+    if action == "list":
+        return _list_folder(path)
+    if action == "find":
+        return _find_files(name or path, "~" if not name else path)
+    if action == "read":
+        return _read_file(path)
+    return _open_folder(path)
+
+
+@tool
+def clipboard(action: Literal["read", "copy"], text: str = "") -> str:
+    """read: get what the user copied (use when they say "this" or "what I copied"). copy: put `text` on it."""
+    return _read_clipboard() if action == "read" else _copy_to_clipboard(text)
+
+
+@tool
+def reminders(action: Literal["set", "list", "cancel"], message: str = "", at: str = "",
+              in_minutes: float = 0, reminder_id: int = 0) -> str:
+    """Desktop-notification reminders. set: `message` plus `in_minutes` or `at` ("YYYY-MM-DD HH:MM").
+    list: upcoming ones with ids. cancel: by `reminder_id`."""
+    if action == "set":
+        return _set_reminder(message, at, in_minutes)
+    if action == "list":
+        return _list_reminders()
+    return _cancel_reminder(reminder_id)
+
+
+@tool
+def memory(action: Literal["remember", "forget", "recall"], text: str, replaces: str = "") -> str:
+    """Long-term memory about the user. remember: save a short fact with absolute dates, no name
+    ("Has a cat named Mochi"); if it updates a known fact, put the old fact in `replaces`.
+    forget: delete the fact best matching `text`. recall: search facts and past days' notes."""
+    if action == "remember":
+        return _remember(text, replaces)
+    if action == "forget":
+        return _forget(text)
+    return _recall(text)
+
+
+@tool
+def tasks(action: Literal["add", "list", "done", "delete"], task: str = "", due: str = "",
+          include_done: bool = False) -> str:
+    """The user's to-do list. add: `task` text, optional `due` "YYYY-MM-DD" or "YYYY-MM-DD HH:MM" (a time also
+    sets a reminder). list: open tasks. done / delete: `task` is a few words from the task."""
+    if action == "add":
+        return _add_task(task, due)
+    if action == "list":
+        return _list_tasks(include_done)
+    return _complete_task(task) if action == "done" else _delete_task(task)
+
+
+@tool
+def notes(action: Literal["save", "search", "delete"], text: str = "") -> str:
+    """Quick notes the user wants to keep (wifi password, a code, an idea). save: `text`.
+    search: by keywords (empty = latest). delete: keywords from the note. Facts about the user go in memory."""
+    if action == "save":
+        return _save_note(text)
+    if action == "search":
+        return _search_notes(text)
+    return _delete_note(text)
+
+
+TOOLS = [web_search, read_url, get_weather, app, browser, set_volume, save_document, files, generate_image,
+         clipboard, reminders, memory, tasks, notes, quit_aura]

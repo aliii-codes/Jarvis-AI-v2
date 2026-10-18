@@ -119,7 +119,7 @@ sudo apt install pulseaudio-utils xdg-utils libnotify-bin
 main.py
 aura/
 ├── config.py   # settings from .env
-├── tools.py      # 20 LangChain tools: web_search, read_url, read_file, set_reminder, ...
+├── tools.py      # 15 LangChain tools: web_search, files, tasks, notes, memory, reminders, ...
 ├── agent.py      # LangGraph agent (create_agent) + SQLite memory + middleware
 ├── reminders.py  # reminder storage (SQLite)
 ├── hotkey.py     # GNOME shortcut installer
@@ -134,6 +134,7 @@ Data/             # memory, reminders, saved documents and images (git-ignored)
 ```
 
 - **Agent**: `langchain.agents.create_agent` builds a LangGraph ReAct loop around `ChatGroq`. The model reads each tool's docstring and decides what to call.
+- **Token budget**: related actions are merged into 15 tools (e.g. `tasks(action=...)`), and a middleware sends only the tools a message needs (keyword groups plus anything used in the last couple of turns), so a typical request is ~700 input tokens instead of ~2,300.
 - **Middleware**: a dynamic system prompt (injects the current date/time), `SummarizationMiddleware` (compresses old history past ~4k tokens), `ContextEditingMiddleware` (sends old tool results as `[cleared]`), `ToolErrorMiddleware` (failed tools are reported to the model instead of crashing), and `ModelCallLimitMiddleware` (caps runaway tool loops).
 - **Conversation memory**: `SqliteSaver` checkpointer in `Data/memory.sqlite`. "New chat" starts a new thread; old ones stay saved.
 - **Long-term memory**: a LangGraph `SqliteStore` (`Data/memory_store.sqlite`) holds facts and daily notes, injected into the system prompt each turn (older days via the `recall` tool). After ~45s of quiet, a background agent on the small model reads new messages and returns structured add / update / delete operations; it skips one-off requests, secrets and sensitive topics, and converts relative dates to absolute ones.

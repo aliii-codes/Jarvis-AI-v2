@@ -28,32 +28,15 @@ from langgraph.config import get_stream_writer
 from . import config, lists, memory, threads
 from .tools import TOOLS
 
-SYSTEM_PROMPT = """You are {assistant}, a personal desktop assistant for {user}.
-Current date and time: {now}.
-
-- Be concise and direct. Short answers unless the user asks for detail.
-- Use tools to act on the computer (open apps, play music, change volume, save documents)
-  and to fetch anything current (web_search, get_weather). Never invent live facts.
-- Use as few tool calls as possible. One web_search is usually enough; only read_url when the snippets don't answer it.
-- For any action, always call the tool and report what it returned; never assume the outcome.
-  Never say you did, or are about to do, something unless you call the tool in this same reply.
-- You can translate, summarize, rewrite and explain text yourself; no tool is needed for that.
-- If the user refers to "this", "what I copied" or "my clipboard", read the clipboard first.
-- Show code, snippets and short texts right in the chat (code in fenced blocks). Only use save_document when
-  the user asks for a file / to save it, or it's a long piece (a whole program, letter, essay).
-  If they say where ("in Downloads", "in a new folder on my Desktop"), pass that as folder; tell them the real path.
-- After using a tool, briefly confirm what you did. Never promise to do something later or in the background;
-  you can only act while replying. If something failed, say so and suggest trying again.
-- Light Markdown is fine (bold, lists, code blocks); avoid tables and headings.
-- Never show internal ids (like #a1b2c3) to the user; they're only for your tool calls.
-- Images: to show the user a picture you must call generate_image; it appears in the chat automatically.
-  Never write image Markdown, attachment links or file paths for images yourself, and never reuse an
-  earlier image when asked again: a repeated request means generate a new one.
-- You have long-term memory of {user}. Use it naturally, the way a friend would, without listing it.
-  If they ask you to remember or forget something, call remember / forget. For older details
-  (past days, things not shown below), call recall. If asked what you know about them, answer from memory.
-- Things to do go in the task list (add_task / complete_task); info to keep goes in notes (save_note).
-  When the user mentions finishing something on their list, complete it. A task with a time gets a reminder."""
+SYSTEM_PROMPT = """You are {assistant}, {user}'s desktop assistant. Now: {now}.
+- Be concise. Light Markdown only (no tables or headings). Never show internal ids like #a1b2c3.
+- Act through tools, and only claim what a tool actually did in this reply; never promise to do things later.
+  If a tool fails, say so. Never invent live facts: use web_search (one search is usually enough).
+- Translate, summarize and write yourself. Show code and short texts in chat; use save_document only when asked
+  for a file or for long pieces, passing the folder they named and telling them the real path.
+- Images only via generate_image (shown in chat automatically): never write image links; a repeat request means a new image.
+- "this" / "what I copied" means the clipboard. Things to do go in tasks, info to keep in notes, facts about
+  {user} in memory. Use what you know about {user} naturally, without reciting it."""
 
 MAX_TOOL_ROUNDS = 4
 STATE_FILE = config.DATA_DIR / "state.json"
@@ -93,6 +76,45 @@ def _system_prompt(request: ModelRequest) -> str:
                         + "\n".join(f"- {t['text']} ({'overdue, ' if t['overdue'] else ''}due {t['due_label']})"
                                      for t in urgent[:6]))
     return "\n\n".join(s for s in sections if s)
+
+
+# Every tool description is sent with every request, so only send the tools a message plausibly needs.
+CORE_TOOLS = {"web_search", "get_weather", "memory"}
+TOOL_TRIGGERS = {
+    "read_url": r"https?://|www\.|\.(com|org|net|io|pk|pdf)\b|\b(link|article|page|url|website)\b",
+    "app": r"\b(open|close|launch|start|quit|kill|run)\b|\bapp\b",
+    "browser": r"\b(open|youtube|play|google|website|site|song|music|video|watch|browser)\b",
+    "set_volume": r"\b(volume|mute|unmute|louder|quieter|sound)\b",
+    "save_document": r"\b(save|file|write|draft|document|letter|email|essay|report|downloads?|desktop|folder)\b",
+    "files": r"\b(file|files|folder|dir|directory|downloads?|desktop|documents|read|find|pdf|open)\b|\.(txt|py|md|pdf)\b",
+    "generate_image": r"\b(image|picture|pic|photo|draw|drawing|paint|art|wallpaper|logo|illustration|sketch|generate)\b",
+    "clipboard": r"\b(clipboard|copied|copy|paste|this)\b",
+    "reminders": r"\b(remind|reminder|reminders|alarm|timer|tomorrow|tonight)\b|\bin \d+ ?(min|hour|h)\b|\bat \d",
+    "tasks": r"\b(task|tasks|todo|to-do|to do|list|done|finished|complete|need to|have to|deadline|due)\b",
+    "notes": r"\b(note|notes|jot|write down|wifi|password|code)\b",
+    "quit_aura": r"\b(bye|goodbye|quit|exit|close yourself|good night)\b",
+}
+
+
+def _wanted_tools(messages: list) -> set[str]:
+    """Core tools, plus groups triggered by the latest user message or used in the last couple of turns
+    (so follow-ups like "cancel it" or "do it again" still have their tools)."""
+    humans = [i for i, m in enumerate(messages) if isinstance(m, HumanMessage) and not _is_summary(m)]
+    if not humans:
+        return set(TOOL_TRIGGERS) | CORE_TOOLS
+    text = str(messages[humans[-1]].content).lower()
+    wanted = set(CORE_TOOLS) | {name for name, pattern in TOOL_TRIGGERS.items() if re.search(pattern, text)}
+    recent_start = humans[-3] if len(humans) >= 3 else 0
+    for m in messages[recent_start:]:
+        if isinstance(m, AIMessage):
+            wanted |= {call["name"] for call in m.tool_calls}
+    return wanted
+
+
+@wrap_model_call
+def _select_tools(request: ModelRequest, handler):
+    wanted = _wanted_tools(request.state["messages"])
+    return handler(request.override(tools=[t for t in request.tools if getattr(t, "name", None) in wanted]))
 
 
 @wrap_model_call
@@ -194,6 +216,7 @@ class Aura:
                 ContextEditingMiddleware(edits=[ClearToolUsesEdit(trigger=2500, keep=1, clear_tool_inputs=True)]),
                 # A failing tool (network down, app missing...) is reported to the model instead of crashing the turn.
                 ToolErrorMiddleware(on_error=lambda e, req: f"Error: {type(e).__name__}: {e}"),
+                _select_tools,
                 _wrap_up,
                 _rate_limit_fallback(models, self.cancelled),
                 ModelCallLimitMiddleware(run_limit=MAX_TOOL_ROUNDS + 4),  # backstop only
@@ -264,7 +287,8 @@ class Aura:
                                 partial.clear()  # this model output is now saved
                                 for call in getattr(msg, "tool_calls", []):
                                     after_tool = True
-                                    yield Event("tool", call["name"])
+                                    action = (call.get("args") or {}).get("action")
+                                    yield Event("tool", f"{call['name']}:{action}" if action else call["name"])
                             elif node == "tools" and isinstance(msg, ToolMessage):
                                 if image := _image_of(msg):
                                     yield Event("image", image)
