@@ -45,6 +45,9 @@ Current date and time: {now}.
   you can only act while replying. If something failed, say so and suggest trying again.
 - Light Markdown is fine (bold, lists, code blocks); avoid tables and headings.
 - Never show internal ids (like #a1b2c3) to the user; they're only for your tool calls.
+- Images: to show the user a picture you must call generate_image; it appears in the chat automatically.
+  Never write image Markdown, attachment links or file paths for images yourself, and never reuse an
+  earlier image when asked again: a repeated request means generate a new one.
 - You have long-term memory of {user}. Use it naturally, the way a friend would, without listing it.
   If they ask you to remember or forget something, call remember / forget. For older details
   (past days, things not shown below), call recall. If asked what you know about them, answer from memory.
@@ -63,7 +66,12 @@ def _image_of(msg: ToolMessage) -> str | None:
     """Path of a generated image attached to a tool result, if the file still exists."""
     artifact = getattr(msg, "artifact", None)
     path = artifact.get("image") if isinstance(artifact, dict) else None
-    return path if path and Path(path).is_file() else None
+    if not path and msg.name == "generate_image":
+        # Images made before results carried an artifact: the path is only in the result text.
+        match = re.search(r"(/\S+/images/\S+\.(?:jpg|png))", str(msg.content))
+        path = match.group(1) if match else None
+    images = (config.DATA_DIR / "images").resolve()
+    return path if path and Path(path).is_file() and Path(path).resolve().is_relative_to(images) else None
 
 
 def _is_summary(msg: BaseMessage) -> bool:

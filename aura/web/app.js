@@ -48,7 +48,8 @@ function copyButton(getText, label) {
 }
 
 function renderMarkdown(target, text) {
-  target.innerHTML = DOMPurify.sanitize(marked.parse(text));
+  // No <img> from model text: real images arrive as tool results; a model-written link would only be a broken image.
+  target.innerHTML = DOMPurify.sanitize(marked.parse(text), { FORBID_TAGS: ["img"] });
   target.querySelectorAll("pre > code").forEach((code) => {
     const pre = code.parentElement;
     const lang = ((code.className || "").match(/language-([\w+#-]+)/) || [])[1] || "";
