@@ -244,7 +244,7 @@ function send(text) {
 $("#composer").addEventListener("submit", (e) => { e.preventDefault(); busy ? stop() : send(input.value); });
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
-  if (panel.classList.contains("open")) closePanel(); else stop();
+  if (document.querySelector(".drawer.open")) closeDrawers(); else stop();
 });
 input.addEventListener("input", () => { autosize(); updateSend(); });
 input.addEventListener("keydown", (e) => {
@@ -269,22 +269,257 @@ document.addEventListener("click", (e) => {
 
 window.focusInput = () => input.focus();
 
+// ── tasks & notes panel ───────────────────────────────────────
+const listsPanel = $("#lists-panel"), badge = $("#lists-badge");
+let listsSnap = { tasks: [], notes: [], attention: 0 }, listEditing = false, listsPending = null;
+
+function switchTab(name) {
+  listsPanel.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
+  $("#tab-tasks").hidden = name !== "tasks";
+  $("#tab-notes").hidden = name !== "notes";
+  (name === "tasks" ? $("#task-input") : $("#note-input")).focus();
+}
+listsPanel.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => switchTab(t.dataset.tab)));
+listsPanel.querySelector(".drawer-close").addEventListener("click", closeDrawers);
+$("#lists-btn").addEventListener("click", () => { openDrawer(listsPanel); bridge && bridge.getLists(); setTimeout(() => $("#task-input").focus(), 50); });
+
+// Inline editing shared by tasks and notes. Notes are multi-line: Ctrl+Enter or clicking away saves.
+function inlineEdit(node, original, onSave, multiline) {
+  if (node.isContentEditable) return;
+  listEditing = true;
+  node.contentEditable = "true"; node.focus();
+  document.getSelection().selectAllChildren(node);
+  const finish = (save) => {
+    node.contentEditable = "false";
+    node.removeEventListener("keydown", onKey); node.removeEventListener("blur", onBlur);
+    const v = (multiline ? node.innerText : node.textContent).trim();
+    listEditing = false;
+    if (save && v && v !== original) onSave(v); else node.textContent = original;
+    if (listsPending) { const snap = listsPending; listsPending = null; renderLists(snap); }
+  };
+  const onKey = (e) => {
+    if (e.key === "Enter" && (!multiline || e.ctrlKey)) { e.preventDefault(); finish(true); }
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(false); }
+  };
+  const onBlur = () => finish(true);
+  node.addEventListener("keydown", onKey); node.addEventListener("blur", onBlur);
+}
+
+function taskItem(t) {
+  const li = el("li", t.done ? "done" : "");
+  const check = el("button", "check" + (t.done ? " on" : ""), ICONS.check);
+  check.type = "button"; check.title = t.done ? "Mark as not done" : "Mark as done";
+  check.addEventListener("click", () => bridge.setTaskDone(t.id, !t.done));
+  const text = el("span", "text"); text.textContent = t.text; text.title = "Click to edit";
+  text.addEventListener("click", () => inlineEdit(text, t.text, (v) => bridge.editTask(t.id, v), false));
+  li.append(check, text);
+  if (t.due_label && !t.done) {
+    const due = el("span", "due" + (t.overdue ? " overdue" : t.due_label.startsWith("today") ? " today" : ""));
+    due.textContent = t.overdue ? `overdue · ${t.due_label}` : t.due_label;
+    li.appendChild(due);
+  }
+  li.appendChild(removeButton(() => bridge.deleteTask(t.id), "Delete task"));
+  return li;
+}
+
+function noteItem(n) {
+  const li = el("li");
+  const body = el("div", "note-body");
+  const text = el("div", "text"); text.textContent = n.text; text.title = "Click to edit (Ctrl+Enter saves)";
+  text.addEventListener("click", () => inlineEdit(text, n.text, (v) => bridge.editNote(n.id, v), true));
+  const meta = el("div", "note-meta");
+  meta.textContent = new Date(n.created).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  body.append(text, meta);
+  li.append(body, removeButton(() => bridge.deleteNote(n.id), "Delete note"));
+  return li;
+}
+
+function renderNotes() {
+  const q = $("#note-search").value.trim().toLowerCase();
+  const shown = listsSnap.notes.filter((n) => !q || n.text.toLowerCase().includes(q));
+  const list = $("#note-list");
+  list.innerHTML = "";
+  shown.forEach((n) => list.appendChild(noteItem(n)));
+  $("#notes-empty").hidden = shown.length > 0;
+  $("#notes-empty").textContent = q ? "No notes match." : "No notes yet. Try “note: the café wifi is …”";
+}
+
+function renderLists(snap) {
+  if (listEditing) { listsPending = snap; return; }  // don't clobber an edit in progress
+  listsSnap = snap;
+  badge.hidden = !snap.attention;
+  badge.textContent = snap.attention > 9 ? "9+" : snap.attention;
+  $("#lists-btn").title = snap.attention ? `Tasks & notes (${snap.attention} due)` : "Tasks & notes";
+
+  const open = snap.tasks.filter((t) => !t.done), done = snap.tasks.filter((t) => t.done);
+  const list = $("#task-list");
+  list.innerHTML = "";
+  open.forEach((t) => list.appendChild(taskItem(t)));
+  $("#tasks-empty").hidden = open.length > 0;
+  const doneList = $("#done-list");
+  doneList.innerHTML = "";
+  done.forEach((t) => doneList.appendChild(taskItem(t)));
+  $("#done-wrap").hidden = !done.length;
+  $("#done-count").textContent = done.length || "";
+  renderNotes();
+}
+
+$("#add-task").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const text = $("#task-input").value.trim();
+  if (!text || !bridge) return;
+  bridge.addTask(text, $("#task-due").value || "");
+  $("#task-input").value = ""; $("#task-due").value = "";
+});
+$("#add-note").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const text = $("#note-input").value.trim();
+  if (!text || !bridge) return;
+  bridge.addNote(text);
+  $("#note-input").value = "";
+});
+$("#note-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && e.ctrlKey) { e.preventDefault(); $("#add-note").requestSubmit(); }
+});
+$("#note-search").addEventListener("input", renderNotes);
+
+// ── chat history sidebar ──────────────────────────────────────
+const app = $("#app"), chatList = $("#chat-list"), chatSearch = $("#chat-search");
+const PENCIL = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+const TRASH = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>';
+let chats = { threads: [], current: null }, searchTimer = null, searching = false;
+
+function storeGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function storeSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private mode etc. */ } }
+
+function setSidebar(open, remember) {
+  app.classList.toggle("side-closed", !open);
+  if (remember) storeSet("sidebar", open ? "open" : "closed");
+}
+const savedSidebar = storeGet("sidebar");
+setSidebar(savedSidebar ? savedSidebar === "open" : window.innerWidth >= 1000, false);
+$("#side-toggle").addEventListener("click", () => setSidebar(app.classList.contains("side-closed"), true));
+$("#side-scrim").addEventListener("click", () => setSidebar(false, false));
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") { e.preventDefault(); $("#side-toggle").click(); }
+});
+const narrow = () => window.innerWidth <= 760;
+
+function groupLabel(iso) {
+  const d = new Date(iso), now = new Date();
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(now) - day(d)) / 86400000);
+  if (diff <= 0) return "Today";
+  if (diff === 1) return "Yesterday";
+  if (diff < 7) return "Previous 7 days";
+  if (diff < 30) return "Previous 30 days";
+  return d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+}
+
+function chatItem(t, snippet) {
+  const item = el("div", "chat-item" + (t.id === chats.current ? " active" : ""));
+  item.dataset.id = t.id;
+  const text = el("span", "chat-text");
+  const title = el("span", "chat-title"); title.textContent = t.title || "Untitled chat";
+  text.appendChild(title);
+  if (snippet) { const sn = el("span", "chat-snippet"); sn.textContent = snippet; text.appendChild(sn); }
+  const actions = el("span", "chat-actions");
+  const ren = el("button", "", PENCIL); ren.title = "Rename"; ren.type = "button";
+  const del = el("button", "del", TRASH); del.title = "Delete"; del.type = "button";
+  actions.append(ren, del);
+  item.append(text, actions);
+
+  item.addEventListener("click", (e) => {
+    if (e.target.closest(".chat-actions") || title.isContentEditable || item.classList.contains("confirming")) return;
+    if (busy || !bridge) return;
+    bridge.openThread(t.id);
+    if (narrow()) setSidebar(false, false);
+  });
+  ren.addEventListener("click", (e) => { e.stopPropagation(); renameChat(title, t); });
+  del.addEventListener("click", (e) => { e.stopPropagation(); confirmDelete(item, t); });
+  return item;
+}
+
+function renameChat(title, t) {
+  title.contentEditable = "true"; title.focus();
+  document.getSelection().selectAllChildren(title);
+  const finish = (save) => {
+    title.contentEditable = "false";
+    title.removeEventListener("keydown", onKey); title.removeEventListener("blur", onBlur);
+    const v = title.textContent.trim();
+    if (save && v && v !== t.title) bridge.renameThread(t.id, v); else title.textContent = t.title;
+  };
+  const onKey = (e) => {
+    if (e.key === "Enter") { e.preventDefault(); finish(true); }
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(false); }
+  };
+  const onBlur = () => finish(true);
+  title.addEventListener("keydown", onKey); title.addEventListener("blur", onBlur);
+}
+
+function confirmDelete(item, t) {
+  if (busy && t.id === chats.current) return;
+  item.classList.add("confirming");
+  item.innerHTML = "";
+  const q = el("span", "confirm-text"); q.textContent = "Delete this chat?";
+  const actions = el("span", "chat-actions");
+  const yes = el("button", "confirm-yes", "Delete"); yes.type = "button";
+  const no = el("button", "", '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>');
+  no.type = "button"; no.title = "Cancel";
+  actions.append(yes, no);
+  item.append(q, actions);
+  yes.addEventListener("click", (e) => { e.stopPropagation(); bridge.deleteThread(t.id); });
+  no.addEventListener("click", (e) => { e.stopPropagation(); renderChats(); });
+}
+
+function renderChats() {
+  if (searching) return;
+  chatList.innerHTML = "";
+  if (!chats.threads.length) { chatList.appendChild(el("div", "chat-empty", "Your chats will show up here.")); return; }
+  let last = null;
+  chats.threads.forEach((t) => {
+    const g = groupLabel(t.updated);
+    if (g !== last) { const h = el("div", "chat-group"); h.textContent = g; chatList.appendChild(h); last = g; }
+    chatList.appendChild(chatItem(t));
+  });
+}
+
+function renderSearch(results) {
+  chatList.innerHTML = "";
+  if (!results.length) { chatList.appendChild(el("div", "chat-empty", "No chats match.")); return; }
+  const h = el("div", "chat-group"); h.textContent = `${results.length} result${results.length > 1 ? "s" : ""}`;
+  chatList.appendChild(h);
+  results.forEach((r) => chatList.appendChild(chatItem(r, r.snippet)));
+}
+
+chatSearch.addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  const q = chatSearch.value.trim();
+  if (!q) { searching = false; renderChats(); return; }
+  searchTimer = setTimeout(() => { searching = true; bridge && bridge.searchChats(q); }, 220);
+});
+chatSearch.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { e.stopPropagation(); chatSearch.value = ""; searching = false; renderChats(); input.focus(); }
+});
+$("#side-new").addEventListener("click", () => { newChatBtn.click(); if (narrow()) setSidebar(false, false); });
+
 // ── memory panel ──────────────────────────────────────────────
 const panel = $("#memory-panel"), backdrop = $("#backdrop"), toast = $("#toast");
 const X_ICON = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
 let lastSnapshot = null, freshTexts = new Set(), toastTimer = null, forgetArmed = null;
 
-function openPanel() {
-  panel.classList.add("open"); panel.setAttribute("aria-hidden", "false"); backdrop.hidden = false;
-  bridge && bridge.getMemory();
+function hideDrawers() {
+  document.querySelectorAll(".drawer.open").forEach((d) => { d.classList.remove("open"); d.setAttribute("aria-hidden", "true"); });
 }
-function closePanel() {
-  panel.classList.remove("open"); panel.setAttribute("aria-hidden", "true"); backdrop.hidden = true;
-  input.focus();
+function openDrawer(d) {
+  hideDrawers();
+  d.classList.add("open"); d.setAttribute("aria-hidden", "false"); backdrop.hidden = false;
 }
+function closeDrawers() { hideDrawers(); backdrop.hidden = true; input.focus(); }
+function openPanel() { openDrawer(panel); bridge && bridge.getMemory(); }
 $("#memory-btn").addEventListener("click", openPanel);
-$("#memory-close").addEventListener("click", closePanel);
-backdrop.addEventListener("click", closePanel);
+$("#memory-close").addEventListener("click", closeDrawers);
+backdrop.addEventListener("click", closeDrawers);
 
 function removeButton(onClick, label) {
   const b = el("button", "remove", X_ICON);
@@ -415,6 +650,9 @@ new QWebChannel(qt.webChannelTransport, (channel) => {
   });
   bridge.note.connect((text, sub) => addNote(text, sub));
   bridge.memory.connect((json) => renderMemory(JSON.parse(json)));
+  bridge.threads.connect((json) => { chats = JSON.parse(json); renderChats(); });
+  bridge.lists.connect((json) => renderLists(JSON.parse(json)));
+  bridge.searchResults.connect((json) => { if (searching) renderSearch(JSON.parse(json)); });
   bridge.memorySaved.connect((json) => showToast(JSON.parse(json)));
 
   bridge.ready();

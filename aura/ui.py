@@ -12,7 +12,7 @@ from PyQt5.QtWebChannel import QWebChannel
 from PyQt5.QtWebEngineWidgets import QWebEnginePage, QWebEngineView
 from PyQt5.QtWidgets import QApplication, QMainWindow, QShortcut
 
-from . import config, instance, learner, memory, reminders, tools
+from . import config, instance, learner, lists, memory, reminders, threads, tools
 from .agent import Aura
 
 WEB_DIR = config.ROOT / "aura" / "web"
@@ -141,6 +141,9 @@ class WebBridge(QObject):
     turnDone = pyqtSignal(bool)  # True if the user stopped it
     memory = pyqtSignal(str)       # full snapshot for the Memory panel
     memorySaved = pyqtSignal(str)  # list of changes the learner just made
+    threads = pyqtSignal(str)        # {"threads": [...], "current": id} for the history sidebar
+    searchResults = pyqtSignal(str)
+    lists = pyqtSignal(str)          # tasks & notes snapshot (+ count for the header badge)
     failed = pyqtSignal(str)
     note = pyqtSignal(str, str)
 
@@ -166,6 +169,90 @@ class WebBridge(QObject):
         if self.window.aura and not self.window.worker:
             self.window.learn_now()  # learn from the conversation being archived
             self.window.aura.new_chat()
+            self.window.push_threads()
+
+    # Tasks & notes panel. Every change pushes a fresh snapshot back to the page.
+    def _push_lists(self):
+        self.lists.emit(json.dumps(lists.snapshot()))
+
+    @pyqtSlot()
+    def getLists(self):
+        self._push_lists()
+
+    @pyqtSlot(str, str)
+    def addTask(self, text: str, due: str):
+        try:
+            lists.add_task(text, due)
+        except ValueError as e:
+            self.failed.emit(str(e))
+        self._push_lists()
+
+    @pyqtSlot(str, bool)
+    def setTaskDone(self, key: str, done: bool):
+        lists.set_done(key, done)
+        self._push_lists()
+
+    @pyqtSlot(str, str)
+    def editTask(self, key: str, text: str):
+        lists.edit_task(key, text=text)
+        self._push_lists()
+
+    @pyqtSlot(str)
+    def deleteTask(self, key: str):
+        lists.delete_task(key)
+        self._push_lists()
+
+    @pyqtSlot(str)
+    def addNote(self, text: str):
+        if text.strip():
+            lists.add_note(text)
+        self._push_lists()
+
+    @pyqtSlot(str, str)
+    def editNote(self, key: str, text: str):
+        lists.edit_note(key, text)
+        self._push_lists()
+
+    @pyqtSlot(str)
+    def deleteNote(self, key: str):
+        lists.delete_note(key)
+        self._push_lists()
+
+    # Chat history sidebar.
+    @pyqtSlot()
+    def listThreads(self):
+        self.window.push_threads()
+
+    @pyqtSlot(str)
+    def openThread(self, thread_id: str):
+        w = self.window
+        if not w.aura or w.worker or thread_id == w.aura.thread_id:
+            return
+        w.learn_now()
+        w.aura.open_thread(thread_id)
+        self.history.emit(json.dumps(w.aura.history()))
+        w.push_threads()
+
+    @pyqtSlot(str, str)
+    def renameThread(self, thread_id: str, title: str):
+        threads.rename(thread_id, title)
+        self.window.push_threads()
+
+    @pyqtSlot(str)
+    def deleteThread(self, thread_id: str):
+        w = self.window
+        if not w.aura or (w.worker and thread_id == w.aura.thread_id):
+            return
+        if thread_id == w.aura.thread_id:
+            w.aura.new_chat()
+            self.history.emit("[]")
+        threads.delete(w.aura.checkpointer, thread_id)
+        w.push_threads()
+
+    @pyqtSlot(str)
+    def searchChats(self, query: str):
+        if self.window.aura:
+            self.searchResults.emit(json.dumps(threads.search(self.window.aura.graph, query)))
 
     # Memory panel. Every change pushes a fresh snapshot back to the page.
     def _push_memory(self):
@@ -280,6 +367,8 @@ class ChatWindow(QMainWindow):
             "theme": self.theme, "error": self.startup_error,
         }))
         self.web.history.emit(json.dumps(self.aura.history() if self.aura else []))
+        self.push_threads()
+        self.web.lists.emit(json.dumps(lists.snapshot()))
         self.page_is_ready = True
         for note in self.pending_notes:
             self.web.note.emit(*note)
@@ -296,10 +385,17 @@ class ChatWindow(QMainWindow):
         self.worker.finished.connect(self._on_finished)
         self.worker.start()
 
+    def push_threads(self):
+        if self.aura:
+            self.web.threads.emit(json.dumps({"threads": threads.list_threads(self.aura.graph),
+                                              "current": self.aura.thread_id}))
+
     def _on_finished(self):
         stopped = self.worker.stopped
         self.worker = None
         self.web.turnDone.emit(stopped)
+        self.push_threads()  # a new chat appears / the current one moves to the top
+        self.web.lists.emit(json.dumps(lists.snapshot()))  # the agent may have changed tasks or notes
         self.learn_timer.start()  # (re)start the idle countdown
 
     def learn_now(self):
@@ -323,6 +419,9 @@ class ChatWindow(QMainWindow):
         self.web.memory.emit(json.dumps(memory.snapshot()))
 
     def _fire_reminders(self):
+        self._ticks = getattr(self, "_ticks", 0) + 1
+        if self.page_is_ready and self._ticks % 4 == 0:  # once a minute: due/overdue badge stays current
+            self.web.lists.emit(json.dumps(lists.snapshot()))
         for _id, message, due_at in reminders.due():
             late = datetime.now() - due_at > timedelta(minutes=2)
             note = (message, f"Missed reminder, was due {due_at:%a %H:%M}" if late else f"Reminder · {due_at:%H:%M}")

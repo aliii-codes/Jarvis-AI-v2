@@ -37,6 +37,8 @@ Ask questions, get live answers from the web, and let it act on your computer.
 | 📝 **Writing** | Emails, letters, essays, code: written, saved and opened in your editor. |
 | 📋 **Clipboard** | "Translate what I copied", "copy that email to my clipboard". |
 | 📁 **Files** | Find, list and read files and PDFs in your home folder ("summarize ~/Downloads/report.pdf"). Access outside your home folder is refused. |
+| 🗂️ **Chat history** | Every conversation is kept. A sidebar (Ctrl+B) lists them by day; reopen, rename, delete, or search across all chats. |
+| ✅ **Tasks & notes** | "Add buy charger to my list", "submit the assignment Friday at 5" (also sets a reminder), "done with the charger". Quick notes: "note: café wifi is …", "what was the café wifi?". A panel (✓ in the header) with due dates, an overdue badge and search. |
 | ⏰ **Reminders** | "Remind me in 20 minutes to stretch", "remind me tomorrow at 9:00 to call mum". Desktop notification when due; list and cancel them too. |
 | ⌨️ **Global hotkey** | Super+J shows/hides AURA from anywhere (starts it if it isn't running). |
 | 🟢 **Always on** | Starts hidden at login; closing the window keeps it running in the background (Ctrl+Q quits). |
@@ -124,6 +126,8 @@ aura/
 ├── desktop.py    # autostart + app menu entries
 ├── memory.py     # long-term memory (LangGraph SqliteStore): facts + daily notes
 ├── learner.py    # background memory agent that extracts facts from conversations
+├── lists.py      # tasks (linked to reminders) and notes
+├── threads.py    # chat history index + search for the sidebar
 ├── ui.py         # Qt window hosting the web UI; agent on a worker thread; single-instance + reminders
 └── web/          # the chat UI: index.html, app.css, app.js + vendored marked, DOMPurify, highlight.js, Inter
 Data/             # memory, reminders, saved documents and images (git-ignored)

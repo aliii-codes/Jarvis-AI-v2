@@ -24,7 +24,7 @@ from langchain_groq import ChatGroq
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.config import get_stream_writer
 
-from . import config, lists, memory
+from . import config, lists, memory, threads
 from .tools import TOOLS
 
 SYSTEM_PROMPT = """You are {assistant}, a personal desktop assistant for {user}.
@@ -42,6 +42,7 @@ Current date and time: {now}.
 - After using a tool, briefly confirm what you did. Never promise to do something later or in the background;
   you can only act while replying. If something failed, say so and suggest trying again.
 - Light Markdown is fine (bold, lists, code blocks); avoid tables and headings.
+- Never show internal ids (like #a1b2c3) to the user; they're only for your tool calls.
 - You have long-term memory of {user}. Use it naturally, the way a friend would, without listing it.
   If they ask you to remember or forget something, call remember / forget. For older details
   (past days, things not shown below), call recall. If asked what you know about them, answer from memory.
@@ -196,9 +197,13 @@ class Aura:
 
     def new_chat(self) -> None:
         """Start a fresh conversation; the old one stays saved in the database."""
-        self.config = {"configurable": {"thread_id": f"chat-{datetime.now():%Y%m%d-%H%M%S}"}}
+        self.open_thread(f"chat-{datetime.now():%Y%m%d-%H%M%S}")
+
+    def open_thread(self, thread_id: str) -> None:
+        """Switch to another conversation (and make it the one AURA reopens on next launch)."""
+        self.config = {"configurable": {"thread_id": thread_id}}
         if not self._fixed_thread:
-            STATE_FILE.write_text(json.dumps({"thread_id": self.thread_id}))
+            STATE_FILE.write_text(json.dumps({"thread_id": thread_id}))
 
     def reset(self) -> None:
         """Permanently delete the current conversation (used by tests)."""
@@ -249,8 +254,10 @@ class Aura:
         except Cancelled:
             stream.close()
             self._repair(partial_text="".join(partial))
+            threads.touch(self.graph, self.thread_id)
             yield Event("stopped")
             return
+        threads.touch(self.graph, self.thread_id)
         yield Event("done")
 
     def _repair(self, partial_text: str = "") -> None:

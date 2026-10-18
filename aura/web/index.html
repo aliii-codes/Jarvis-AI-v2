@@ -12,8 +12,26 @@
   <script src="vendor/highlight.min.js"></script>
 </head>
 <body>
+ <div id="app" class="app">
+  <aside id="sidebar" class="sidebar" aria-label="Chat history">
+    <div class="side-head">
+      <button id="side-new" class="side-new" type="button">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+        New chat
+      </button>
+    </div>
+    <div class="side-search">
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="chat-search" placeholder="Search chats…" autocomplete="off">
+    </div>
+    <nav id="chat-list" class="chat-list"></nav>
+  </aside>
+  <div class="main-col">
   <header class="topbar">
     <div class="brand">
+      <button id="side-toggle" class="icon-btn" title="Chat history (Ctrl+B)" aria-label="Toggle chat history">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg>
+      </button>
       <span class="mark" aria-hidden="true"></span>
       <span id="assistant-name">AURA</span>
     </div>
@@ -62,6 +80,9 @@
       <div class="hint"><kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line</div>
     </div>
   </footer>
+  </div>
+ </div>
+ <div id="side-scrim" class="side-scrim"></div>
 
   <div id="backdrop" class="backdrop" hidden></div>
   <aside id="memory-panel" class="drawer" aria-label="Memory" aria-hidden="true">
