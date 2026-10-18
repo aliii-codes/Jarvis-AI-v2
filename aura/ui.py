@@ -1,12 +1,13 @@
 """Desktop window: a local web page (aura/web) rendered by QtWebEngine, driven over QWebChannel."""
 import json
+from pathlib import Path
 import shutil
 import subprocess
 import sys
 from datetime import datetime, timedelta
 
 from PyQt5.QtCore import QObject, Qt, QThread, QTimer, QUrl, pyqtSignal, pyqtSlot
-from PyQt5.QtGui import QColor, QDesktopServices, QGuiApplication, QKeySequence
+from PyQt5.QtGui import QColor, QDesktopServices, QGuiApplication, QImage, QKeySequence
 from PyQt5.QtNetwork import QLocalServer
 from PyQt5.QtWebChannel import QWebChannel
 from PyQt5.QtWebEngineWidgets import QWebEnginePage, QWebEngineView
@@ -18,6 +19,25 @@ from .agent import Aura
 WEB_DIR = config.ROOT / "aura" / "web"
 LEARN_AFTER_IDLE_MS = 45_000  # learn once the user pauses, so it doesn't compete with chat for rate limits
 BACKGROUND = {"dark": "#0e0e11", "light": "#ffffff"}  # matches app.css, avoids a white flash on load
+IMAGES_DIR = config.DATA_DIR / "images"
+
+
+def _file_url(path: str) -> str:
+    return QUrl.fromLocalFile(path).toString()
+
+
+def _history_json(aura: Aura | None) -> str:
+    """History for the page; images become [role, url, path]."""
+    rows = []
+    for role, text in (aura.history() if aura else []):
+        rows.append(["image", _file_url(text), text] if role == "image" else [role, text])
+    return json.dumps(rows)
+
+
+def _generated_image(path: str) -> Path | None:
+    """Only files AURA generated (inside Data/images) may be opened or copied from the page."""
+    p = Path(path).resolve()
+    return p if p.is_file() and p.is_relative_to(IMAGES_DIR.resolve()) else None
 
 # (while running, when done) — shown as chips under the user's message.
 TOOL_LABELS = {
@@ -72,6 +92,7 @@ class Worker(QThread):
     """Runs one agent turn off the UI thread."""
     token = pyqtSignal(str)
     tool = pyqtSignal(str)
+    image = pyqtSignal(str)
     status = pyqtSignal(str)
     failed = pyqtSignal(str)
 
@@ -89,6 +110,8 @@ class Worker(QThread):
                     self.tool.emit(event.text)
                 elif event.kind == "status":
                     self.status.emit(event.text)
+                elif event.kind == "image":
+                    self.image.emit(event.text)
                 elif event.kind == "stopped":
                     self.stopped = True
         except Exception as e:
@@ -138,6 +161,7 @@ class WebBridge(QObject):
     history = pyqtSignal(str)
     token = pyqtSignal(str)
     tool = pyqtSignal(str, str, str)
+    image = pyqtSignal(str, str)     # (file URL for <img>, local path for actions)
     status = pyqtSignal(str)
     turnDone = pyqtSignal(bool)  # True if the user stopped it
     memory = pyqtSignal(str)       # full snapshot for the Memory panel
@@ -231,7 +255,7 @@ class WebBridge(QObject):
             return
         w.learn_now()
         w.aura.open_thread(thread_id)
-        self.history.emit(json.dumps(w.aura.history()))
+        self.history.emit(_history_json(w.aura))
         w.push_threads()
 
     @pyqtSlot(str, str)
@@ -301,6 +325,22 @@ class WebBridge(QObject):
     def openUrl(self, url: str):
         QDesktopServices.openUrl(QUrl(url))
 
+    # Actions on generated images shown in the chat.
+    @pyqtSlot(str)
+    def openImage(self, path: str):
+        if p := _generated_image(path):
+            tools.open_path(str(p))
+
+    @pyqtSlot(str)
+    def showImageInFolder(self, path: str):
+        if p := _generated_image(path):
+            tools.open_path(str(p.parent))
+
+    @pyqtSlot(str)
+    def copyImage(self, path: str):
+        if p := _generated_image(path):
+            QApplication.clipboard().setImage(QImage(str(p)))
+
 
 class _Page(QWebEnginePage):
     def acceptNavigationRequest(self, url, nav_type, is_main_frame):
@@ -367,7 +407,7 @@ class ChatWindow(QMainWindow):
             "assistant": config.ASSISTANT_NAME, "user": config.USERNAME,
             "theme": self.theme, "error": self.startup_error,
         }))
-        self.web.history.emit(json.dumps(self.aura.history() if self.aura else []))
+        self.web.history.emit(_history_json(self.aura))
         self.push_threads()
         self.web.lists.emit(json.dumps(lists.snapshot()))
         self.page_is_ready = True
@@ -382,6 +422,7 @@ class ChatWindow(QMainWindow):
         self.worker.token.connect(self.web.token)
         self.worker.tool.connect(lambda name: self.web.tool.emit(name, *TOOL_LABELS.get(name, (name, name))))
         self.worker.status.connect(self.web.status)
+        self.worker.image.connect(lambda path: self.web.image.emit(_file_url(path), path))
         self.worker.failed.connect(self.web.failed)
         self.worker.finished.connect(self._on_finished)
         self.worker.start()

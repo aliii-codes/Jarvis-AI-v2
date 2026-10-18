@@ -97,6 +97,57 @@ function actionsFor(getText) {
   return actions;
 }
 
+// ── generated images ──────────────────────────────────────────
+const IMG_ICONS = {
+  open: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3h7v7"/><path d="M10 14 21 3"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg>',
+  folder: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>',
+};
+
+function imageCard(url, path) {
+  const fig = el("figure", "image-card");
+  const img = el("img");
+  img.alt = "Generated image";
+  img.src = url;
+  img.addEventListener("load", () => follow());
+  img.addEventListener("click", () => openLightbox(url));
+  const bar = el("div", "image-actions");
+  const mk = (icon, title, fn) => {
+    const b = el("button", "", icon); b.type = "button"; b.title = title; b.setAttribute("aria-label", title);
+    b.addEventListener("click", (e) => { e.stopPropagation(); fn(b); });
+    return b;
+  };
+  bar.append(
+    mk(ICONS.copy, "Copy image", (b) => { bridge.copyImage(path); b.innerHTML = ICONS.check; setTimeout(() => { b.innerHTML = ICONS.copy; }, 1400); }),
+    mk(IMG_ICONS.folder, "Show in folder", () => bridge.showImageInFolder(path)),
+    mk(IMG_ICONS.open, "Open in image viewer", () => bridge.openImage(path)),
+  );
+  fig.append(img, bar);
+  return fig;
+}
+
+function addImageRow(url, path) {
+  hideWelcome();
+  const row = el("div", "msg assistant");
+  row.appendChild(imageCard(url, path));
+  thread.appendChild(row);
+}
+
+function onImage(url, path) {
+  if (!turn) startTurn();
+  settleChips();
+  if (turn.skel) { turn.skel.remove(); turn.skel = null; }
+  turn.segment = null;  // text after the image starts a new block below it
+  turn.body.appendChild(imageCard(url, path));
+  follow();
+}
+
+const lightbox = el("div", "lightbox");
+lightbox.hidden = true;
+lightbox.appendChild(el("img"));
+document.body.appendChild(lightbox);
+lightbox.addEventListener("click", () => { lightbox.hidden = true; });
+function openLightbox(url) { lightbox.querySelector("img").src = url; lightbox.hidden = false; }
+
 function addNote(text, sub, kind) {
   hideWelcome();
   const note = el("div", "note" + (kind ? " " + kind : ""));
@@ -178,6 +229,10 @@ function onTool(name, running, done) {
     turn.chips.push(chip);
   }
   chipLabel(chip, running);
+  if (name === "generate_image" && !turn.skel) {  // placeholder until the picture arrives
+    turn.skel = el("div", "image-skel", "<span>Creating image…</span>");
+    turn.body.appendChild(turn.skel);
+  }
   turn.typing.hidden = true;
   setStatus(running.toLowerCase(), true);
   follow();
@@ -186,6 +241,7 @@ function onTool(name, running, done) {
 function onTurnDone(stopped) {
   if (turn) {
     settleChips();
+    if (turn.skel) { turn.skel.remove(); turn.skel = null; }
     if (stopped) turn.body.appendChild(el("div", "stopped", "Stopped"));
     turn.texts.forEach((s) => renderMarkdown(s.node, s.text));
     turn.typing.remove();
@@ -244,7 +300,9 @@ function send(text) {
 $("#composer").addEventListener("submit", (e) => { e.preventDefault(); busy ? stop() : send(input.value); });
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
-  if (document.querySelector(".drawer.open")) closeDrawers(); else stop();
+  if (!lightbox.hidden) lightbox.hidden = true;
+  else if (document.querySelector(".drawer.open")) closeDrawers();
+  else stop();
 });
 input.addEventListener("input", () => { autosize(); updateSend(); });
 input.addEventListener("keydown", (e) => {
@@ -636,12 +694,14 @@ new QWebChannel(qt.webChannelTransport, (channel) => {
   bridge.history.connect((json) => {
     const items = JSON.parse(json);
     thread.innerHTML = "";
-    items.forEach(([role, text]) => (role === "user" ? addUser(text) : addAssistant(text)));
+    items.forEach(([role, text, path]) =>
+      role === "user" ? addUser(text) : role === "image" ? addImageRow(text, path) : addAssistant(text));
     if (!items.length) showWelcome(); else hideWelcome();
     follow(true);
   });
   bridge.token.connect(onToken);
   bridge.tool.connect(onTool);
+  bridge.image.connect(onImage);
   bridge.turnDone.connect(onTurnDone);
   bridge.status.connect((text) => setStatus(text, true));
   bridge.failed.connect((msg) => {

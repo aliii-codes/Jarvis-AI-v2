@@ -3,6 +3,7 @@ import json
 import re
 import sqlite3
 import threading
+from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Iterator, Literal
@@ -56,6 +57,13 @@ STATE_FILE = config.DATA_DIR / "state.json"
 
 class Cancelled(Exception):
     """Raised inside the graph when the user presses Stop."""
+
+
+def _image_of(msg: ToolMessage) -> str | None:
+    """Path of a generated image attached to a tool result, if the file still exists."""
+    artifact = getattr(msg, "artifact", None)
+    path = artifact.get("image") if isinstance(artifact, dict) else None
+    return path if path and Path(path).is_file() else None
 
 
 def _is_summary(msg: BaseMessage) -> bool:
@@ -148,7 +156,7 @@ def _rate_limit_fallback(models: list[ChatGroq], cancelled: threading.Event):
 
 @dataclass
 class Event:
-    kind: Literal["token", "tool", "status", "stopped", "done"]
+    kind: Literal["token", "tool", "image", "status", "stopped", "done"]
     text: str = ""
 
 
@@ -248,6 +256,9 @@ class Aura:
                                 for call in getattr(msg, "tool_calls", []):
                                     after_tool = True
                                     yield Event("tool", call["name"])
+                            elif node == "tools" and isinstance(msg, ToolMessage):
+                                if image := _image_of(msg):
+                                    yield Event("image", image)
                             elif isinstance(msg, AIMessage) and msg.content:
                                 # e.g. the call-limit middleware's message; not streamed as tokens
                                 yield Event("token", ("\n\n" if had_text else "") + msg.content)
@@ -277,11 +288,13 @@ class Aura:
             self.graph.update_state(self.config, {"messages": fixes}, as_node="tools")
 
     def history(self) -> list[tuple[str, str]]:
-        """Visible (role, text) pairs from the saved conversation."""
+        """Visible (role, text) pairs from the saved conversation; role "image" carries a file path."""
         out = []
         for msg in self.graph.get_state(self.config).values.get("messages", []):
             if isinstance(msg, HumanMessage) and not _is_summary(msg):
                 out.append(("user", msg.content))
             elif isinstance(msg, AIMessage) and msg.content:
                 out.append(("assistant", msg.content))
+            elif isinstance(msg, ToolMessage) and (image := _image_of(msg)):
+                out.append(("image", image))
         return out

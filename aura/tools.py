@@ -272,9 +272,10 @@ def _image_from_pollinations(prompt: str) -> bytes:
     raise RuntimeError("Pollinations is rate limiting; try again in a minute.")
 
 
-@tool
-def generate_image(prompt: str) -> str:
-    """Generate an image from a text description and open it. Write a detailed visual prompt in English."""
+@tool(response_format="content_and_artifact")
+def generate_image(prompt: str) -> tuple[str, dict]:
+    """Generate an image from a text description; it's shown to the user right in the chat.
+    Write a detailed visual prompt in English."""
     global _hf_images_unavailable
     data, source, note = None, "", ""
     if config.HF_API_KEY and not _hf_images_unavailable:
@@ -291,8 +292,9 @@ def generate_image(prompt: str) -> str:
     ext = "png" if data[:4] == b"\x89PNG" else "jpg"
     path = images / f"{_slug(prompt, 40)}_{datetime.now():%H%M%S}.{ext}"
     path.write_bytes(data)
-    open_path(str(path))
-    return f"Generated with {source} and opened {path}.{note}"
+    # The path travels as an artifact: the UI shows the image inline, and it's saved with the conversation.
+    return (f"Generated with {source}. The image is now displayed to the user in the chat "
+            f"(saved at {path}; don't repeat the path unless asked).{note}", {"image": str(path)})
 
 
 @tool

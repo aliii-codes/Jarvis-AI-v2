@@ -194,6 +194,7 @@ main::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
 /* typing indicator */
 .typing { display: inline-flex; gap: 5px; padding: 8px 0; }
 .typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: blink 1.2s infinite ease-in-out both; }
+.typing[hidden] { display: none; }  /* the display rule above would otherwise beat the hidden attribute */
 .typing span:nth-child(2) { animation-delay: .15s; }
 .typing span:nth-child(3) { animation-delay: .3s; }
 
@@ -428,3 +429,36 @@ kbd { font-family: inherit; font-size: 11px; padding: 0 4px; border: 1px solid v
   .app.side-closed .sidebar { margin-left: 0; transform: translateX(-100%); box-shadow: none; }
   .app:not(.side-closed) ~ .side-scrim { display: block; position: fixed; inset: 0; z-index: 7; background: rgba(0, 0, 0, .35); }
 }
+
+/* ── generated images ────────────────────────────────────── */
+.image-card {
+  position: relative; display: inline-block; max-width: min(440px, 100%); margin: 2px 0 12px;
+  border: 1px solid var(--border); border-radius: 16px; overflow: hidden; background: var(--surface);
+  animation: rise .3s ease both;
+}
+.image-card img { display: block; width: 100%; height: auto; cursor: zoom-in; }
+.image-actions {
+  position: absolute; top: 8px; right: 8px; display: flex; gap: 4px; opacity: 0; transition: opacity .15s;
+}
+.image-card:hover .image-actions { opacity: 1; }
+.image-actions button {
+  width: 30px; height: 30px; display: grid; place-items: center; border: none; border-radius: 9px;
+  background: rgba(15, 15, 18, .72); color: #fff; cursor: pointer; backdrop-filter: blur(6px);
+}
+.image-actions button:hover { background: rgba(15, 15, 18, .9); }
+
+/* Chromium 87 has no aspect-ratio, so the placeholder uses a fixed height */
+.image-skel {
+  width: min(440px, 100%); height: 300px; margin: 2px 0 12px; border-radius: 16px; border: 1px solid var(--border);
+  display: grid; place-items: center; color: var(--muted); font-size: 13px;
+  background: linear-gradient(100deg, var(--surface) 30%, var(--surface-2) 50%, var(--surface) 70%);
+  background-size: 300% 100%; animation: shimmer 1.4s ease-in-out infinite;
+}
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+
+.lightbox {
+  position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .86); cursor: zoom-out; animation: fade .15s ease both;
+}
+.lightbox[hidden] { display: none; }
+.lightbox img { max-width: 92vw; max-height: 90vh; border-radius: 10px; box-shadow: 0 20px 60px rgba(0, 0, 0, .5); }

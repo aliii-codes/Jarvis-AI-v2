@@ -43,7 +43,7 @@ Ask questions, get live answers from the web, and let it act on your computer.
 | ⌨️ **Global hotkey** | Super+J shows/hides AURA from anywhere (starts it if it isn't running). |
 | 🟢 **Always on** | Starts hidden at login; closing the window keeps it running in the background (Ctrl+Q quits). |
 | ⚡ **Never stalls** | When a model hits Groq's rate limit, AURA switches to another model instantly; if all are busy it shows a countdown. Stop any reply with Esc or the stop button. |
-| 🖼️ **Images** | Text-to-image via Hugging Face (optional key). |
+| 🖼️ **Images** | Generated images appear right in the chat (click to enlarge; copy, show in folder, open) and stay in your chat history. Uses Hugging Face FLUX when your account has credits, otherwise a free service (lower quality, small watermark). |
 | 🧠 **Memory** | Remembers you across chats: facts (where you study, people you mention, preferences, upcoming events) and a short note per day. Learns in the background after you chat, or when you say "remember…" / "forget…". A Memory panel (✦ in the header) lets you see, edit and delete everything, or turn learning off. Stored only on your computer. |
 
 You don't use commands; just say what you want. The agent decides which tools to use, and can chain several in one request ("open firefox and tell me today's top tech story").
