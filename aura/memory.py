@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta
 
 from langgraph.store.sqlite import SqliteStore
 
-from . import config
+from . import config, embeddings
 
 DB = config.DATA_DIR / "memory_store.sqlite"
 FACTS, DAYS, META = ("facts",), ("days",), ("meta",)
@@ -156,16 +156,41 @@ def _words(text: str) -> set[str]:
     return {w for w in _norm(text).split() if len(w) > 2}
 
 
+_vectors: dict[str, "np.ndarray"] = {}  # text -> embedding, cached for the session
+
+
+def _semantic(query: str, texts: list[str], k: int) -> list[str]:
+    """The k texts closest in meaning to the query ("when's my test?" -> "Networks exam on ...").
+    Memory is small, so vectors are computed on demand and compared directly; no index needed."""
+    import numpy as np
+    missing = [t for t in texts if t not in _vectors]
+    if missing:
+        for t, v in zip(missing, embeddings.current.embed_documents(missing)):
+            _vectors[t] = np.asarray(v)
+    q = np.asarray(embeddings.current.embed_query(query))
+    scores = [(float(_vectors[t] @ q / ((np.linalg.norm(_vectors[t]) * np.linalg.norm(q)) or 1)), t) for t in texts]
+    return [t for _, t in sorted(scores, reverse=True)[:k]]
+
+
 def search(query: str, limit: int = 8) -> list[str]:
-    """Keyword search over facts and all daily notes (no embeddings needed at this size)."""
+    """Facts and daily notes matching the query: closest in meaning first, then exact keyword hits.
+    Returns several candidates on purpose: small embedding models often tie close meanings
+    (an exam and a dentist appointment both match "test"), and the model picks the right one."""
+    entries = [f["text"] for f in facts()] + [f"{d['date']}: {n}" for d in days() for n in d["notes"]]
     want = _words(query)
-    scored = []
-    for f in facts():
-        scored.append((len(want & _words(f["text"])), f["text"]))
-    for d in days():
-        for note in d["notes"]:
-            scored.append((len(want & _words(note)), f"{d['date']}: {note}"))
-    return [text for score, text in sorted(scored, key=lambda s: -s[0]) if score][:limit]
+    keyword = [t for score, t in sorted(((len(want & _words(t)), t) for t in entries), key=lambda s: -s[0]) if score]
+    meaning = []
+    if entries:
+        try:
+            meaning = _semantic(query, entries, k=5)
+        except Exception:  # embedding model unavailable: keywords only
+            pass
+    seen, out = set(), []
+    for t in meaning + keyword:
+        if t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out[:limit]
 
 
 def prompt_block() -> str:

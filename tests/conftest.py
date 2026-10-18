@@ -12,7 +12,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from aura import agent, memory, reminders, tools  # noqa: E402
+from aura import agent, documents, embeddings, memory, reminders, tools  # noqa: E402
 from aura import config as aura_config  # noqa: E402  (pytest hooks need the name `config`)
 
 
@@ -51,6 +51,12 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(reminders, "DB", data / "reminders.sqlite")
     monkeypatch.setattr(agent, "STATE_FILE", data / "state.json")
     monkeypatch.setattr(tools, "HOME", home)
+    monkeypatch.setattr(embeddings, "current", embeddings.HashEmbeddings())  # no model download in tests
+    monkeypatch.setattr(memory, "_vectors", {})
+    monkeypatch.setattr(documents, "_store", None)
+    env_file = tmp_path / ".env"
+    env_file.write_text("")
+    monkeypatch.setattr(aura_config, "ENV_FILE", env_file)  # no document folders etc. from the real .env
     if not aura_config.GROQ_API_KEY:
         monkeypatch.setattr(aura_config, "GROQ_API_KEY", "test-key")  # offline tests never call the API
 

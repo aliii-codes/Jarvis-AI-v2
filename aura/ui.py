@@ -12,9 +12,9 @@ from PyQt5.QtGui import QColor, QDesktopServices, QGuiApplication, QImage, QKeyS
 from PyQt5.QtNetwork import QLocalServer
 from PyQt5.QtWebChannel import QWebChannel
 from PyQt5.QtWebEngineWidgets import QWebEnginePage, QWebEngineView
-from PyQt5.QtWidgets import QApplication, QMainWindow, QShortcut
+from PyQt5.QtWidgets import QApplication, QFileDialog, QMainWindow, QShortcut
 
-from . import checkins, config, instance, learner, lists, memory, reminders, settings, threads, tools
+from . import checkins, config, documents, embeddings, instance, learner, lists, memory, reminders, settings, threads, tools
 from .agent import Aura
 
 WEB_DIR = config.ROOT / "aura" / "web"
@@ -42,6 +42,7 @@ def _generated_image(path: str) -> Path | None:
 # (while running, when done) — shown as chips under the user's message.
 TOOL_LABELS = {
     "web_search": ("Searching the web", "Searched the web"),
+    "research": ("Researching", "Researched"),
     "read_url": ("Reading the page", "Read the page"),
     "get_weather": ("Checking the weather", "Checked the weather"),
     "app:open": ("Opening app", "Opened app"),
@@ -72,6 +73,7 @@ TOOL_LABELS = {
     "notes:save": ("Saving note", "Saved note"),
     "notes:search": ("Searching notes", "Searched notes"),
     "notes:delete": ("Deleting note", "Deleted note"),
+    "documents": ("Searching your documents", "Searched your documents"),
     "quit_aura": ("Closing", "Closing"),
 }
 
@@ -295,6 +297,13 @@ class WebBridge(QObject):
         self._run(lambda: settings.apply(name, value), done)
 
     @pyqtSlot()
+    def pickFolder(self):
+        """Native folder picker for Settings → Documents."""
+        folder = QFileDialog.getExistingDirectory(self.window, "Choose a folder to search", str(Path.home()))
+        if folder:
+            self.saveSetting("doc_add", json.dumps(folder))
+
+    @pyqtSlot()
     def openDataFolder(self):
         tools.open_path(str(config.DATA_DIR))
 
@@ -451,6 +460,12 @@ class ChatWindow(QMainWindow):
         self.reminder_timer.start()
         QTimer.singleShot(0, self._fire_reminders)  # anything that came due while AURA was closed
 
+        # Documents: load the embedding model early (first question shouldn't stall), then catch up on
+        # indexing; re-check every 30 minutes for new or changed files.
+        self.doc_timer = QTimer(self, interval=30 * 60_000, timeout=self.index_documents)
+        self.doc_timer.start()
+        QTimer.singleShot(3000, self.index_documents)
+
         # Background memory agent: runs after the user goes quiet, and once shortly after startup.
         self.learners: list[LearnWorker] = []
         self.learn_timer = QTimer(self, singleShot=True, interval=LEARN_AFTER_IDLE_MS, timeout=self.learn_now)
@@ -476,6 +491,8 @@ class ChatWindow(QMainWindow):
             self.send_init()
         if name in ("learning",):
             self.web.memory.emit(json.dumps(memory.snapshot()))
+        if name in ("doc_add", "doc_remove", "doc_reindex"):
+            self.index_documents()
         if rebuild:
             if self.worker:
                 self.rebuild_pending = True  # don't pull the agent out from under a reply in progress
@@ -517,6 +534,23 @@ class ChatWindow(QMainWindow):
         self.worker.failed.connect(self.web.failed)
         self.worker.finished.connect(self._on_finished)
         self.worker.start()
+
+    def index_documents(self):
+        if documents.progress["running"]:
+            return
+
+        def work():
+            embeddings.warm_up()
+            return documents.index_all() if documents.folders() else None
+
+        def done(result, err):
+            self.web.getSettings()  # refresh the Settings panel's status line (and pick up errors)
+
+        self.web._run(work, done)
+        # While indexing, refresh the status line every 2s so progress is visible.
+        poll = QTimer(self, interval=2000)
+        poll.timeout.connect(lambda: (self.web.getSettings() if documents.progress["running"] else poll.stop()))
+        poll.start()
 
     def push_threads(self):
         if self.aura:

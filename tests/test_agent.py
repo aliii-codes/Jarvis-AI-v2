@@ -97,3 +97,11 @@ def test_typographic_lookalikes_are_made_plain(aura_agent):
     assert _plain("Coffee‑5G at 27 °C") == "Coffee-5G at 27 °C"
     put(aura_agent, HumanMessage("wifi?"), AIMessage("It's Coffee‑5G"))
     assert aura_agent.history()[-1] == ("assistant", "It's Coffee-5G")
+
+
+def test_research_answer_is_shown_as_the_reply(aura_agent):
+    # research is return_direct: its cited answer is the reply itself, so history must show it.
+    put(aura_agent, HumanMessage("python vs rust?"),
+        AIMessage("", tool_calls=[{"name": "research", "args": {"question": "python vs rust"}, "id": "r1"}]),
+        ToolMessage("Rust is faster [1].\n\n**Sources**\n1. [A](https://a.com)", tool_call_id="r1", name="research"))
+    assert aura_agent.history()[-1] == ("assistant", "Rust is faster [1].\n\n**Sources**\n1. [A](https://a.com)")

@@ -51,3 +51,24 @@ def test_learner_accepts_wrapped_strings():
     ops = MemoryOps.model_validate({"add": [{"description": "Prefers short answers"}, "Lives in Lahore"],
                                     "update": [], "delete": [], "day_note": None})
     assert ops.add == ["Prefers short answers", "Lives in Lahore"]
+
+
+def test_search_finds_by_meaning_and_keyword():
+    memory.add_fact("Networks exam on Tue 21 Oct 2026")
+    memory.add_fact("Has a cat named Mochi")
+    memory.add_fact("Dentist appointment on Fri 23 Oct")
+    hits = memory.search("networks")  # exact keyword
+    assert hits[0] == "Networks exam on Tue 21 Oct 2026"
+    assert len(memory.search("anything", limit=8)) == 3  # several candidates come back for the model to choose
+
+
+def test_search_without_embeddings_falls_back_to_keywords(monkeypatch):
+    from aura import embeddings
+
+    class Broken(embeddings.HashEmbeddings):
+        def embed_documents(self, texts):
+            raise RuntimeError("model unavailable")
+
+    monkeypatch.setattr(embeddings, "current", Broken())
+    memory.add_fact("Has a cat named Mochi")
+    assert memory.search("what is my cat called") == ["Has a cat named Mochi"]

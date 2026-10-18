@@ -20,6 +20,7 @@ from langchain_core.tools import tool
 from pypdf import PdfReader
 
 from . import config, lists
+from . import documents as docs_store
 from . import memory as memory_store  # the `memory` and `reminders` names are tools below
 from . import reminders as reminder_store
 
@@ -78,8 +79,9 @@ def _in_home(path: str) -> Path:
 
 @tool
 def web_search(query: str) -> str:
-    """Search the web for current information: news, prices, scores, recent events,
-    or anything you are not sure about. Returns titles, snippets and URLs."""
+    """Quick web lookup for a single current fact: news, prices, scores, recent events, or anything
+    you are not sure about. Returns titles, snippets and URLs. For comparisons ("X vs Y"),
+    recommendations or in-depth questions, use research instead."""
     results = DDGS().text(query, max_results=6)
     if not results:
         return "No results found."
@@ -602,5 +604,37 @@ def notes(action: Literal["save", "search", "delete"], text: str = "") -> str:
     return _delete_note(text)
 
 
-TOOLS = [web_search, read_url, get_weather, app, browser, set_volume, save_document, files, generate_image,
-         clipboard, reminders, memory, tasks, notes, quit_aura]
+@tool
+def documents(query: str) -> str:
+    """Search the user's own files (notes, lecture PDFs, documents in the folders they chose in Settings)
+    by meaning. Use for questions about their course material, notes or documents, and cite the file
+    names (and pages) you used."""
+    if not docs_store.folders():
+        return "No document folders are set up yet. The user can add folders in Settings → Documents."
+    hits = docs_store.search(query)
+    if not hits:
+        return "Nothing relevant in the user's documents (indexing may still be running)."
+    lines = []
+    for h in hits:
+        where = Path(h["path"]).name + (f", p.{h['page']}" if h.get("page") else "")
+        lines.append(f"[{where}] {h['text'][:700]}")
+    return "\n\n".join(lines)
+
+
+@tool(return_direct=True)  # the cited answer goes straight to the user, not re-written (and stripped) by the model
+def research(question: str) -> str:
+    """Research a question that needs several sources: comparisons ("X vs Y"), recommendations, pros and
+    cons, or explaining something recent in depth. Reads several web pages and returns an answer with
+    numbered citations and a source list. For a quick fact, use web_search instead."""
+    from . import research as research_agent
+    from langgraph.config import get_stream_writer
+    try:
+        writer = get_stream_writer()
+        status = lambda text: writer({"status": text})
+    except Exception:  # not running inside the agent graph
+        status = lambda text: None
+    return research_agent.run(question, status)
+
+
+TOOLS = [web_search, research, read_url, get_weather, app, browser, set_volume, save_document, files,
+         generate_image, clipboard, reminders, memory, tasks, notes, documents, quit_aura]

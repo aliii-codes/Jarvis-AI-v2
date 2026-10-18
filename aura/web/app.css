@@ -501,3 +501,6 @@ kbd { font-family: inherit; font-size: 11px; padding: 0 4px; border: 1px solid v
 /* ── gentle check-ins ────────────────────────────────────── */
 .checkin-label { font-size: 12px; font-weight: 600; color: var(--accent); margin-bottom: 4px; letter-spacing: .01em; }
 .msg.checkin .content { font-size: 15.5px; }
+
+.doc-actions { display: flex; gap: 8px; margin: 8px 0 6px; }
+#doc-folders li .text { cursor: default; font-family: "Fira Code", ui-monospace, monospace; font-size: 12.5px; }

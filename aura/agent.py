@@ -25,7 +25,7 @@ from langchain_groq import ChatGroq
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.config import get_stream_writer
 
-from . import config, lists, memory, threads
+from . import config, documents, lists, memory, threads
 from .tools import TOOLS
 
 SYSTEM_PROMPT = """You are {assistant}, {user}'s desktop assistant. Now: {now}.
@@ -35,10 +35,17 @@ SYSTEM_PROMPT = """You are {assistant}, {user}'s desktop assistant. Now: {now}.
 - Translate, summarize and write yourself. Show code and short texts in chat; use save_document only when asked
   for a file or for long pieces, passing the folder they named and telling them the real path.
 - Images only via generate_image (shown in chat automatically): never write image links; a repeat request means a new image.
+- Questions about {user}'s own past or life ("what did I...", "when is my...") that the facts below don't answer:
+  call memory recall before saying you don't know. Never web_search personal questions.
+- Questions about {user}'s own notes, lectures or files: use documents, and name the file in plain words
+  ("according to networks.md, ...").
+- Questions needing several sources (comparisons, recommendations, in-depth): use research, then present its
+  answer keeping the [1]-style citations and the Sources list. Quick facts: web_search.
 - "this" / "what I copied" means the clipboard. Things to do go in tasks, info to keep in notes, facts about
   {user} in memory. Use what you know about {user} naturally, without reciting it."""
 
 MAX_TOOL_ROUNDS = 4
+DIRECT_TOOLS = {t.name for t in TOOLS if t.return_direct}  # their output is shown as the reply
 STATE_FILE = config.DATA_DIR / "state.json"
 
 
@@ -102,6 +109,9 @@ TOOL_TRIGGERS = {
     "tasks": r"\b(task|tasks|todo|to-do|to do|list|done|finished|complete|need to|have to|deadline|due)\b",
     "notes": r"\b(note|notes|jot|write down|wifi|password|code)\b",
     "quit_aura": r"\b(bye|goodbye|quit|exit|close yourself|good night)\b",
+    "documents": r"\b(notes|lecture|lectures|slides|pdf|document|documents|my files|course|syllabus|chapter|according to)\b",
+    "research": r"\b(research|compare|comparison|vs|versus|pros and cons|which is better|best \w+ for|in depth|"
+                r"deep dive|recommend|look into|worth it|should i (buy|get|use|choose))\b",
 }
 
 
@@ -113,6 +123,8 @@ def _wanted_tools(messages: list) -> set[str]:
         return set(TOOL_TRIGGERS) | CORE_TOOLS
     text = str(messages[humans[-1]].content).lower()
     wanted = set(CORE_TOOLS) | {name for name, pattern in TOOL_TRIGGERS.items() if re.search(pattern, text)}
+    if documents.folders():  # questions about their files rarely contain a tell-tale keyword
+        wanted.add("documents")
     recent_start = humans[-3] if len(humans) >= 3 else 0
     for m in messages[recent_start:]:
         if isinstance(m, AIMessage):
@@ -284,7 +296,7 @@ class Aura:
         """Run one user turn, yielding answer tokens, tool calls and status updates as they happen."""
         self.cancelled.clear()
         self._repair()
-        had_text = after_tool = False
+        had_text = after_tool = used_tool = False
         partial: list[str] = []
         stream = self.graph.stream({"messages": [HumanMessage(text)]}, self.config,
                                    stream_mode=["messages", "updates", "custom"])
@@ -312,12 +324,16 @@ class Aura:
                             if node == "model":
                                 partial.clear()  # this model output is now saved
                                 for call in getattr(msg, "tool_calls", []):
-                                    after_tool = True
+                                    after_tool = used_tool = True
                                     action = (call.get("args") or {}).get("action")
                                     yield Event("tool", f"{call['name']}:{action}" if action else call["name"])
                             elif node == "tools" and isinstance(msg, ToolMessage):
                                 if image := _image_of(msg):
                                     yield Event("image", image)
+                                elif msg.name in DIRECT_TOOLS and msg.content:
+                                    # return_direct: the tool's output *is* the reply (e.g. research with citations)
+                                    yield Event("token", ("\n\n" if had_text else "") + _plain(str(msg.content)))
+                                    had_text = True
                             elif isinstance(msg, AIMessage) and msg.content:
                                 # e.g. the call-limit middleware's message; not streamed as tokens
                                 yield Event("token", ("\n\n" if had_text else "") + _plain(msg.content))
@@ -328,6 +344,9 @@ class Aura:
             threads.touch(self.graph, self.thread_id)
             yield Event("stopped")
             return
+        if not had_text and not used_tool:
+            # A model (usually a fallback under rate limits) returned nothing: never show a blank reply.
+            yield Event("token", "Sorry, I didn't get an answer back. Please try again.")
         threads.touch(self.graph, self.thread_id)
         yield Event("done")
 
@@ -357,4 +376,6 @@ class Aura:
                 out.append((role, _plain(msg.content)))
             elif isinstance(msg, ToolMessage) and (image := _image_of(msg)):
                 out.append(("image", image))
+            elif isinstance(msg, ToolMessage) and msg.name in DIRECT_TOOLS and msg.content:
+                out.append(("assistant", _plain(str(msg.content))))  # shown to the user as the reply
         return out

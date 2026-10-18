@@ -49,6 +49,8 @@ function copyButton(getText, label) {
 
 function renderMarkdown(target, text, highlight = true) {
   // No <img> from model text: real images arrive as tool results; a model-written link would only be a broken image.
+  // gpt-oss sometimes emits its built-in citation markers (【documents】, 【1†L3-L5】): meaningless here.
+  text = text.replace(/【[^】]*】/g, "");
   target.innerHTML = DOMPurify.sanitize(marked.parse(text), { FORBID_TAGS: ["img"] });
   target.querySelectorAll("pre > code").forEach((code) => {
     const pre = code.parentElement;
@@ -520,7 +522,32 @@ function renderSettings(snap) {
     f.querySelector("input").placeholder = masked ? `Saved (${masked}). Paste a new key to replace it` : "Paste your key";
   });
   $("#hotkey-label").textContent = snap.hotkey ? `${LABELS[snap.hotkey] || snap.hotkey} shows or hides the window` : "Off";
+  renderDocuments(snap.documents, snap.data_dir);
 }
+
+function renderDocuments(d, dataDir) {
+  const list = $("#doc-folders");
+  list.innerHTML = "";
+  const home = (dataDir.match(/^\/home\/[^/]+/) || [""])[0];
+  d.folders.forEach((f) => {
+    const li = el("li");
+    const t = el("span", "text"); t.textContent = home && f.startsWith(home) ? "~" + f.slice(home.length) : f;
+    li.append(t, removeButton(() => saveSetting("doc_remove", f), "Stop searching this folder"));
+    list.appendChild(li);
+  });
+  const status = $("#doc-status");
+  status.className = "key-status" + (d.error ? " err" : "");
+  if (d.error) status.textContent = d.error;
+  else if (d.running) status.textContent = `Indexing… ${d.done}/${d.total} files`;
+  else if (!d.folders.length) status.textContent = "No folders yet.";
+  else {
+    const n = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
+    status.textContent = `${n(d.files, "file")} · ${n(d.passages, "passage")} indexed`;
+  }
+  $("#doc-reindex").disabled = !d.folders.length || d.running;
+}
+$("#doc-add").addEventListener("click", () => bridge && bridge.pickFolder());
+$("#doc-reindex").addEventListener("click", () => saveSetting("doc_reindex", true));
 
 settingsPanel.querySelectorAll('input[data-setting]:not([type="checkbox"])').forEach((inp) =>
   inp.addEventListener("change", () => saveSetting(inp.dataset.setting, inp.value)));

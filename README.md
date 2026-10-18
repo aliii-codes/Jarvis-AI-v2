@@ -29,6 +29,8 @@ Ask questions, get live answers from the web, and let it act on your computer.
 |---|---|
 | 💬 **Chat** | Streaming answers with full Markdown, syntax-highlighted code (one-click copy), live tool-progress chips, and light/dark themes that follow your GNOME setting. |
 | 🌐 **Live web search** | Current news, prices, scores, anything recent (DuckDuckGo, no key needed). |
+| 🔬 **Research** | "Compare X vs Y", "is it worth…": plans searches, reads several pages and answers with inline citations and a source list. |
+| 📚 **Your documents** | Add folders in Settings (notes, lecture PDFs, Markdown); ask "according to my notes…" and get answers citing the file and page. Indexed locally, incrementally. |
 | 📄 **Read pages & PDFs** | "Summarize this article: <url>" — fetches the page or PDF and reads it. |
 | 🌦️ **Weather** | Current conditions and today's forecast for any city (no key needed). |
 | 🖥️ **Apps & websites** | Open or close desktop apps, open websites. |
@@ -130,6 +132,9 @@ aura/
 ├── learner.py    # background memory agent that extracts facts from conversations
 ├── lists.py      # tasks (linked to reminders) and notes
 ├── threads.py    # chat history index + search for the sidebar
+├── embeddings.py # local embeddings (fastembed, bge-small) for meaning-based search
+├── documents.py  # folder indexing + search (LangGraph SqliteStore with a sqlite-vec index)
+├── research.py   # research agent: LangGraph plan → search → read → write
 ├── settings.py   # Settings panel backend: validate, save to .env, reload
 ├── checkins.py   # gentle once-a-day check-ins
 ├── ui.py         # Qt window hosting the web UI; agent on a worker thread; single-instance + reminders
@@ -141,6 +146,7 @@ Data/             # memory, reminders, saved documents and images (git-ignored)
 - **Token budget**: related actions are merged into 15 tools (e.g. `tasks(action=...)`), and a middleware sends only the tools a message needs (keyword groups plus anything used in the last couple of turns), so a typical request is ~700 input tokens instead of ~2,300.
 - **Middleware**: a dynamic system prompt (injects the current date/time), `SummarizationMiddleware` (compresses old history past ~4k tokens), `ContextEditingMiddleware` (sends old tool results as `[cleared]`), `ToolErrorMiddleware` (failed tools are reported to the model instead of crashing), and `ModelCallLimitMiddleware` (caps runaway tool loops).
 - **Conversation memory**: `SqliteSaver` checkpointer in `Data/memory.sqlite`. "New chat" starts a new thread; old ones stay saved.
+- **Meaning-based search**: a local embedding model (fastembed, `bge-small-en`, ~65 MB, downloaded once) powers memory recall ("when's my test?" finds the exam) and documents. Nothing is sent anywhere; without the model it falls back to keywords.
 - **Long-term memory**: a LangGraph `SqliteStore` (`Data/memory_store.sqlite`) holds facts and daily notes, injected into the system prompt each turn (older days via the `recall` tool). After ~45s of quiet, a background agent on the small model reads new messages and returns structured add / update / delete operations; it skips one-off requests, secrets and sensitive topics, and converts relative dates to absolute ones.
 - **Rate limits**: a custom middleware tries `ChatModel`, then each of `FallbackModels` (every Groq model has its own tokens-per-minute budget), and only waits when all are limited, streaming the countdown to the UI. Stop is cancellable at any point, and the saved history is repaired so a cancelled tool call never breaks the next request.
 - **Streaming**: `graph.stream(..., stream_mode=["messages", "updates"])` yields tokens and tool calls, which the Qt side forwards to the page over `QWebChannel`.

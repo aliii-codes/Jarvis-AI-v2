@@ -5,7 +5,7 @@ import threading
 import groq
 from dotenv import set_key
 
-from . import config, desktop, hotkey, memory
+from . import config, desktop, documents, hotkey, memory
 
 REPLY_LENGTHS = {"short": 512, "normal": 1024, "long": 2048}
 # speech, safety-classifier and tiny-context models (allam: 4k context, no tool calling) would break AURA
@@ -46,6 +46,7 @@ def snapshot() -> dict:
         "autostart": desktop.AUTOSTART.exists(),
         "hotkey": hotkey.status(),
         "data_dir": str(config.DATA_DIR),
+        "documents": documents.status(),
     }
 
 
@@ -106,6 +107,14 @@ def _apply(name: str, value) -> tuple[str, bool]:
     elif name == "autostart":
         (desktop.install if value else desktop.uninstall)()
         message = "Starts at login." if value else "Won't start at login."
+    elif name == "doc_add":
+        folder = documents.add_folder(str(value))
+        message = f"Added {folder}. Indexing in the background…"
+    elif name == "doc_remove":
+        documents.remove_folder(str(value))
+        message = "Folder removed."
+    elif name == "doc_reindex":
+        message = "Re-indexing in the background…"
     elif name == "hotkey":
         (hotkey.install if value else hotkey.uninstall)()
         message = "Super+J shortcut on." if value else "Shortcut removed."
