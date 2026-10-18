@@ -19,6 +19,10 @@
     </div>
     <div class="topbar-right">
       <span id="status" class="status"><span class="dot"></span><span class="label">ready</span></span>
+      <button id="lists-btn" class="icon-btn badge-host" title="Tasks & notes" aria-label="Tasks and notes">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="17" height="16" rx="3"/><path d="m8 12 2.5 2.5L16 9"/></svg>
+        <span id="lists-badge" class="badge" hidden></span>
+      </button>
       <button id="memory-btn" class="icon-btn" title="Memory" aria-label="Memory">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9Z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8Z"/></svg>
       </button>
@@ -87,6 +91,41 @@
       <p id="days-empty" class="empty" hidden>No notes yet.</p>
 
       <button id="forget-all" class="danger-link" type="button">Forget everything</button>
+    </div>
+  </aside>
+  <aside id="lists-panel" class="drawer" aria-label="Tasks and notes" aria-hidden="true">
+    <div class="drawer-head">
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="tasks" role="tab">Tasks</button>
+        <button class="tab" data-tab="notes" role="tab">Notes</button>
+      </div>
+      <button class="icon-btn drawer-close" aria-label="Close">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="drawer-body">
+      <section id="tab-tasks">
+        <form id="add-task" class="add-fact">
+          <input id="task-input" placeholder="Add a task…" autocomplete="off">
+          <input id="task-due" type="date" class="date-input" title="Due date (optional)">
+          <button type="submit">Add</button>
+        </form>
+        <ul id="task-list" class="mem-list tasks"></ul>
+        <p id="tasks-empty" class="empty" hidden>Nothing to do. Nice.</p>
+        <details id="done-wrap" class="done-wrap" hidden>
+          <summary>Completed <span id="done-count" class="count"></span></summary>
+          <ul id="done-list" class="mem-list tasks"></ul>
+        </details>
+      </section>
+      <section id="tab-notes" hidden>
+        <input id="note-search" class="search" placeholder="Search notes…" autocomplete="off">
+        <form id="add-note" class="add-note">
+          <textarea id="note-input" rows="2" placeholder="Write a note…"></textarea>
+          <button type="submit">Save</button>
+        </form>
+        <ul id="note-list" class="mem-list notes"></ul>
+        <p id="notes-empty" class="empty" hidden>No notes yet. Try “note: the café wifi is …”</p>
+      </section>
     </div>
   </aside>
   <div id="toast" class="toast" hidden></div>

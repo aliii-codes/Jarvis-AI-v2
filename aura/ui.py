@@ -43,6 +43,13 @@ TOOL_LABELS = {
     "remember": ("Saving to memory", "Saved to memory"),
     "forget": ("Forgetting", "Forgot"),
     "recall": ("Checking memory", "Checked memory"),
+    "add_task": ("Adding task", "Added task"),
+    "list_tasks": ("Checking tasks", "Checked tasks"),
+    "complete_task": ("Completing task", "Completed task"),
+    "delete_task": ("Deleting task", "Deleted task"),
+    "save_note": ("Saving note", "Saved note"),
+    "search_notes": ("Searching notes", "Searched notes"),
+    "delete_note": ("Deleting note", "Deleted note"),
     "quit_aura": ("Closing", "Closing"),
 }
 

@@ -19,7 +19,7 @@ from ddgs import DDGS
 from langchain_core.tools import tool
 from pypdf import PdfReader
 
-from . import config, memory, reminders
+from . import config, lists, memory, reminders
 
 IS_WINDOWS = platform.system() == "Windows"
 IS_MAC = platform.system() == "Darwin"
@@ -176,25 +176,63 @@ def save_document(title: str, content: str) -> str:
     return f"Saved and opened {path}."
 
 
+_hf_images_unavailable = False  # set after a credits/availability failure, so we don't retry it every time
+
+
+def _image_from_hf(prompt: str) -> bytes:
+    """Best quality, via Hugging Face Inference Providers (needs account credits)."""
+    from huggingface_hub import InferenceClient
+    client = InferenceClient(provider="auto", api_key=config.HF_API_KEY, timeout=120)
+    image = client.text_to_image(prompt, model=config.IMAGE_MODEL)
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _image_from_pollinations(prompt: str) -> bytes:
+    """Free, no key needed; lower quality and a small watermark. The prompt is sent to pollinations.ai.
+    The free tier allows one image every ~45s per IP and is sometimes overloaded: wait out short
+    "retry after" delays (with a visible countdown) a couple of times before giving up."""
+    from langgraph.config import get_stream_writer
+    for attempt in range(3):
+        resp = requests.get(f"https://image.pollinations.ai/prompt/{quote_plus(prompt)}",
+                            params={"width": 1024, "height": 1024, "model": "flux", "nologo": "true"}, timeout=120)
+        if resp.status_code == 200 and resp.headers.get("Content-Type", "").startswith("image/"):
+            return resp.content
+        wait = re.search(r"[Rr]etry after (\d+)s", resp.text)
+        if attempt < 2 and resp.status_code in (402, 429, 503) and wait and int(wait.group(1)) <= 60:
+            seconds = int(wait.group(1)) + 1
+            try:
+                get_stream_writer()({"status": f"free image limit · waiting {seconds}s"})
+            except Exception:
+                pass  # not running inside the agent graph
+            time.sleep(seconds)
+            continue
+        raise RuntimeError(f"Pollinations returned {resp.status_code}: {resp.text[:150]}")
+    raise RuntimeError("Pollinations is rate limiting; try again in a minute.")
+
+
 @tool
 def generate_image(prompt: str) -> str:
-    """Generate an image from a text description and open it."""
-    if not config.HF_API_KEY:
-        return "Image generation is not configured: add HuggingFaceAPIKey to the .env file."
-    resp = requests.post(
-        "https://router.huggingface.co/hf-inference/models/stabilityai/stable-diffusion-xl-base-1.0",
-        headers={"Authorization": f"Bearer {config.HF_API_KEY}"},
-        json={"inputs": prompt},
-        timeout=120,
-    )
-    if resp.status_code != 200 or not resp.headers.get("Content-Type", "").startswith("image/"):
-        return f"Image generation failed ({resp.status_code}): {resp.text[:200]}"
+    """Generate an image from a text description and open it. Write a detailed visual prompt in English."""
+    global _hf_images_unavailable
+    data, source, note = None, "", ""
+    if config.HF_API_KEY and not _hf_images_unavailable:
+        try:
+            data, source = _image_from_hf(prompt), "Hugging Face (FLUX)"
+        except Exception as e:
+            _hf_images_unavailable = True
+            note = (" Hugging Face credits are used up, so the free service was used."
+                    if "402" in str(e) or "credits" in str(e).lower() else f" Hugging Face failed ({type(e).__name__}).")
+    if data is None:
+        data, source = _image_from_pollinations(prompt), "Pollinations (free)"
     images = config.DATA_DIR / "images"
     images.mkdir(exist_ok=True)
-    path = images / f"{_slug(prompt, 40)}_{datetime.now():%H%M%S}.jpg"
-    path.write_bytes(resp.content)
+    ext = "png" if data[:4] == b"\x89PNG" else "jpg"
+    path = images / f"{_slug(prompt, 40)}_{datetime.now():%H%M%S}.{ext}"
+    path.write_bytes(data)
     open_path(str(path))
-    return f"Generated and opened {path}."
+    return f"Generated with {source} and opened {path}.{note}"
 
 
 @tool
@@ -355,6 +393,78 @@ def recall(query: str) -> str:
     return "\n".join(hits) if hits else "Nothing in memory about that."
 
 
+def _task_line(t: dict) -> str:
+    due = f" (due {t['due_label']}{', OVERDUE' if t['overdue'] else ''})" if t.get("due") else ""
+    return f"#{t['id']} {'[done] ' if t['done'] else ''}{t['text']}{due}"
+
+
+@tool
+def add_task(text: str, due: str = "") -> str:
+    """Add a to-do to the user's task list ("add buy charger to my list", "I need to submit the report by Friday").
+    `due` is optional: "YYYY-MM-DD", or "YYYY-MM-DD HH:MM" to also get a reminder at that time."""
+    task = lists.add_task(text, due)
+    task = {**task, "due_label": lists.due_label(task.get("due")), "overdue": False}
+    extra = " A reminder will pop up at that time." if task.get("reminder_id") else ""
+    verb = "Already on the list" if task["existing"] else "Added task"
+    return f"{verb}: {_task_line(task)}.{extra}"
+
+
+@tool
+def list_tasks(include_done: bool = False) -> str:
+    """Show the user's open tasks (to-do list), with ids and due dates."""
+    items = lists.tasks(include_done=include_done)
+    return "\n".join(_task_line(t) for t in items) if items else "The task list is empty."
+
+
+@tool
+def complete_task(task: str) -> str:
+    """Mark a task as done. `task` is its id (e.g. "#a1b2c3") or a few words from it."""
+    match = lists.find_task(task)
+    if not match:
+        return f"No open task matches '{task}'."
+    lists.set_done(match["id"])
+    return f"Completed: {match['text']}"
+
+
+@tool
+def delete_task(task: str) -> str:
+    """Remove a task entirely (not completed, just deleted). `task` is its id or a few words from it."""
+    match = lists.find_task(task, include_done=True)
+    if not match:
+        return f"No task matches '{task}'."
+    lists.delete_task(match["id"])
+    return f"Deleted task: {match['text']}"
+
+
+@tool
+def save_note(text: str) -> str:
+    """Save a quick note the user wants to keep and look up later (a wifi password, a code, an idea,
+    a parking spot, a book recommendation). For facts about the user themselves, use remember instead;
+    for long documents, use save_document."""
+    note = lists.add_note(text)
+    return f"Saved note #{note['id']}."
+
+
+@tool
+def search_notes(query: str = "") -> str:
+    """Look up the user's saved notes by keywords (empty query returns the latest notes)."""
+    found = lists.search_notes(query)
+    if not found:
+        return "No notes match that."
+    return "\n\n".join(f"#{n['id']} ({n['created'][:10]}): {n['text']}" for n in found)
+
+
+@tool
+def delete_note(note: str) -> str:
+    """Delete a saved note by its id (e.g. "#a1b2c3") or by keywords from it."""
+    key = note.strip().lstrip("#")
+    target = next((n for n in lists.notes() if n["id"] == key), None) or next(iter(lists.search_notes(note, 1)), None)
+    if not target:
+        return "No note matches that."
+    lists.delete_note(target["id"])
+    return f"Deleted note: {target['text'][:80]}"
+
+
 @tool
 def quit_aura() -> str:
     """Close the AURA app. Only use when the user clearly says goodbye or asks to quit."""
@@ -365,4 +475,5 @@ def quit_aura() -> str:
 TOOLS = [web_search, read_url, get_weather, open_app, close_app, open_website, search_in_browser,
          play_on_youtube, set_volume, save_document, generate_image,
          read_clipboard, copy_to_clipboard, list_folder, find_files, read_file,
-         set_reminder, list_reminders, cancel_reminder, remember, forget, recall, quit_aura]
+         set_reminder, list_reminders, cancel_reminder, remember, forget, recall,
+         add_task, list_tasks, complete_task, delete_task, save_note, search_notes, delete_note, quit_aura]

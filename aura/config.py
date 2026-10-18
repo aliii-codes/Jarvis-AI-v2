@@ -17,6 +17,8 @@ def _get(key: str, default: str | None = None) -> str | None:
 
 GROQ_API_KEY = _get("GroqAPIKey") or _get("GROQ_API_KEY")
 HF_API_KEY = _get("HuggingFaceAPIKey")
+# Hugging Face text-to-image model (served by its partner providers; falls back to Pollinations when unavailable).
+IMAGE_MODEL = _get("ImageModel", "black-forest-labs/FLUX.1-schnell")
 
 USERNAME = _get("Username", "User")
 ASSISTANT_NAME = _get("Assistantname", "AURA")

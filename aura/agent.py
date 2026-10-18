@@ -24,7 +24,7 @@ from langchain_groq import ChatGroq
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.config import get_stream_writer
 
-from . import config, memory
+from . import config, lists, memory
 from .tools import TOOLS
 
 SYSTEM_PROMPT = """You are {assistant}, a personal desktop assistant for {user}.
@@ -39,11 +39,14 @@ Current date and time: {now}.
 - You can translate, summarize, rewrite and explain text yourself; no tool is needed for that.
 - If the user refers to "this", "what I copied" or "my clipboard", read the clipboard first.
 - When asked to write something longer (email, letter, essay, code), write it and save it with save_document.
-- After using a tool, briefly confirm what you did.
+- After using a tool, briefly confirm what you did. Never promise to do something later or in the background;
+  you can only act while replying. If something failed, say so and suggest trying again.
 - Light Markdown is fine (bold, lists, code blocks); avoid tables and headings.
 - You have long-term memory of {user}. Use it naturally, the way a friend would, without listing it.
   If they ask you to remember or forget something, call remember / forget. For older details
-  (past days, things not shown below), call recall. If asked what you know about them, answer from memory."""
+  (past days, things not shown below), call recall. If asked what you know about them, answer from memory.
+- Things to do go in the task list (add_task / complete_task); info to keep goes in notes (save_note).
+  When the user mentions finishing something on their list, complete it. A task with a time gets a reminder."""
 
 MAX_TOOL_ROUNDS = 4
 STATE_FILE = config.DATA_DIR / "state.json"
@@ -64,8 +67,13 @@ def _system_prompt(request: ModelRequest) -> str:
         user=config.USERNAME,
         now=datetime.now().strftime("%A %d %B %Y, %H:%M"),
     )
-    known = memory.prompt_block()
-    return f"{prompt}\n\n{known}" if known else prompt
+    sections = [prompt, memory.prompt_block()]
+    urgent = lists.attention()
+    if urgent:
+        sections.append("Tasks due today or overdue (mention them if it fits naturally):\n"
+                        + "\n".join(f"- {t['text']} ({'overdue, ' if t['overdue'] else ''}due {t['due_label']})"
+                                     for t in urgent[:6]))
+    return "\n\n".join(s for s in sections if s)
 
 
 @wrap_model_call

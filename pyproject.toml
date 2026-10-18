@@ -13,6 +13,8 @@ dependencies = [
     "requests>=2.31.0",
     "beautifulsoup4>=4.12.3",
     "pypdf>=4.0",
+    "huggingface_hub>=0.34",
+    "Pillow>=10.2.0",
     "AppOpener>=1.6; sys_platform == 'win32'",
     "keyboard>=0.13.5; sys_platform == 'win32'",
     "PyQt5>=5.15.10",

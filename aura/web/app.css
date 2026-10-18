@@ -6,6 +6,7 @@
 }
 
 :root, [data-theme="dark"] {
+  color-scheme: dark;  /* native controls (date picker) follow the theme */
   --bg: #0e0e11;
   --surface: #17171b;
   --surface-2: #1e1e23;
@@ -27,6 +28,7 @@
 }
 
 [data-theme="light"] {
+  color-scheme: light;
   --bg: #ffffff;
   --surface: #f7f7f8;
   --surface-2: #efeff2;
@@ -312,3 +314,56 @@ kbd { font-family: inherit; font-size: 11px; padding: 0 4px; border: 1px solid v
 
 @keyframes fade { from { opacity: 0; } }
 @keyframes flash { 0%, 40% { background: var(--accent-ring); } }
+
+/* ── tasks & notes panel ─────────────────────────────────── */
+.badge-host { position: relative; }
+.badge {
+  position: absolute; top: 3px; right: 2px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px;
+  background: var(--danger); color: #fff; font-size: 10.5px; font-weight: 700; line-height: 16px; text-align: center;
+  border: 2px solid var(--bg); box-sizing: content-box;
+}
+.badge[hidden] { display: none; }
+
+.tabs { display: flex; gap: 2px; padding: 3px; background: var(--surface-2); border-radius: 10px; }
+.tab { height: 30px; padding: 0 14px; border: none; border-radius: 8px; background: transparent; color: var(--muted);
+       font-size: 13.5px; font-weight: 550; cursor: pointer; }
+.tab.active { background: var(--bg); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, .15); }
+#tab-tasks[hidden], #tab-notes[hidden], .done-wrap[hidden] { display: none; }
+#tab-tasks, #tab-notes { padding-top: 6px; }
+
+.date-input { width: 132px; flex: none !important; color: var(--muted) !important; font-size: 13px !important; }
+.date-input:valid { color: var(--text) !important; }
+
+.tasks li { align-items: center; }
+.check {
+  flex-shrink: 0; width: 18px; height: 18px; border-radius: 50%; border: 1.6px solid var(--border-strong);
+  background: transparent; display: grid; place-items: center; cursor: pointer; padding: 0; color: transparent;
+  transition: all .12s;
+}
+.check:hover { border-color: var(--accent); }
+.check.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.tasks li.done .text { color: var(--muted); text-decoration: line-through; }
+.due { flex-shrink: 0; font-size: 12px; color: var(--muted); padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; white-space: nowrap; }
+.due.today { color: var(--accent); border-color: var(--accent-glow); }
+.due.overdue { color: var(--danger); border-color: var(--danger-border); }
+
+.done-wrap { margin-top: 18px; }
+.done-wrap summary { cursor: pointer; color: var(--muted); font-size: 12px; font-weight: 600; text-transform: uppercase;
+                     letter-spacing: .06em; padding: 6px 0; list-style: none; outline: none; }
+.done-wrap summary::-webkit-details-marker { display: none; }
+.done-wrap summary::before { content: "▸ "; }
+.done-wrap[open] summary::before { content: "▾ "; }
+
+.search { width: 100%; height: 36px; padding: 0 12px; margin-bottom: 10px; border: 1px solid var(--border); border-radius: 10px;
+          background: var(--surface); color: var(--text); font: inherit; font-size: 14px; outline: none; }
+.search:focus, .add-note textarea:focus { border-color: var(--border-strong); }
+.add-note { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; margin-bottom: 14px; }
+.add-note textarea { width: 100%; resize: vertical; min-height: 56px; max-height: 240px; padding: 9px 12px; border: 1px solid var(--border);
+                     border-radius: 10px; background: var(--surface); color: var(--text); font: inherit; font-size: 14px; outline: none; }
+.add-note button { height: 32px; padding: 0 14px; border: none; border-radius: 9px; background: var(--text); color: var(--bg);
+                   font-weight: 560; font-size: 13px; cursor: pointer; }
+.notes li { flex-direction: row; border: 1px solid var(--border); margin-bottom: 8px; padding: 10px 6px 10px 12px; }
+.notes li:hover { background: var(--surface); }
+.notes .note-body { flex: 1; min-width: 0; }
+.notes .text { white-space: pre-wrap; }
+.notes .note-meta { font-size: 11.5px; color: var(--muted); margin-top: 4px; }
