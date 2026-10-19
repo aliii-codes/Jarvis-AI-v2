@@ -47,15 +47,20 @@ function copyButton(getText, label) {
   return btn;
 }
 
-function renderMarkdown(target, text) {
-  target.innerHTML = DOMPurify.sanitize(marked.parse(text));
+function renderMarkdown(target, text, highlight = true) {
+  // No <img> from model text: real images arrive as tool results; a model-written link would only be a broken image.
+  // gpt-oss sometimes emits its built-in citation markers (【documents】, 【1†L3-L5】): meaningless here.
+  text = text.replace(/【[^】]*】/g, "");
+  target.innerHTML = DOMPurify.sanitize(marked.parse(text), { FORBID_TAGS: ["img"] });
   target.querySelectorAll("pre > code").forEach((code) => {
     const pre = code.parentElement;
     const lang = ((code.className || "").match(/language-([\w+#-]+)/) || [])[1] || "";
-    try {
-      if (lang && hljs.getLanguage(lang)) hljs.highlightElement(code);
-      else code.innerHTML = hljs.highlightAuto(code.textContent).value;
-    } catch (e) { /* plain text is fine */ }
+    if (highlight) {  // skipped while text is still being revealed: re-highlighting every frame is costly
+      try {
+        if (lang && hljs.getLanguage(lang)) hljs.highlightElement(code);
+        else code.innerHTML = hljs.highlightAuto(code.textContent).value;
+      } catch (e) { /* plain text is fine */ }
+    }
     const block = el("div", "codeblock");
     const head = el("div", "code-head", `<span>${lang || "code"}</span>`);
     head.appendChild(copyButton(() => code.textContent, "Copy"));
@@ -73,15 +78,87 @@ function showWelcome() {
   welcome.hidden = false;
 }
 
-function addUser(text) {
+function fileChip(f, onRemove) {
+  const chip = el("div", "att-chip");
+  if (f.kind === "image") {
+    const img = el("img"); img.src = f.url; img.alt = f.name; chip.appendChild(img);
+  } else {
+    const ext = (f.name.split(".").pop() || "doc").slice(0, 4);
+    const icon = el("span", "doc-icon"); icon.textContent = ext; chip.appendChild(icon);
+  }
+  const name = el("span", "att-name"); name.textContent = f.name; name.title = f.name;
+  chip.appendChild(name);
+  if (onRemove) {
+    const x = el("button", "att-remove", '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>');
+    x.type = "button"; x.title = "Remove"; x.addEventListener("click", onRemove);
+    chip.appendChild(x);
+  }
+  return chip;
+}
+
+function addUser(text, files) {
   hideWelcome();
   const row = el("div", "msg user");
-  const bubble = el("div", "bubble");
-  bubble.textContent = text;
-  row.appendChild(bubble);
+  if (files && files.length) {
+    const box = el("div", "user-files");
+    files.forEach((f) => {
+      if (f.kind === "image") {
+        const img = el("img"); img.src = f.url; img.alt = f.name; img.title = f.name;
+        img.addEventListener("click", () => openLightbox(f.url));
+        img.addEventListener("load", () => follow());
+        box.appendChild(img);
+      } else {
+        const chip = fileChip(f);
+        chip.title = "Open " + f.name;
+        chip.addEventListener("click", () => bridge && bridge.openAttachment(f.id));
+        box.appendChild(chip);
+      }
+    });
+    row.appendChild(box);
+  }
+  if (text && text.trim()) {
+    const bubble = el("div", "bubble");
+    bubble.textContent = text;
+    row.appendChild(bubble);
+  }
   thread.appendChild(row);
   follow(true);
 }
+
+// ── attaching files: 📎 button, pasted screenshots, dropped files ──
+let pending = [];
+const tray = $("#tray");
+
+function renderTray() {
+  tray.innerHTML = "";
+  pending.forEach((f, i) => tray.appendChild(fileChip(f, () => { pending.splice(i, 1); renderTray(); updateSend(); })));
+  tray.hidden = !pending.length;
+}
+
+function attachBlob(file, fallbackName) {
+  if (file.size > 25 * 1024 * 1024) { addNote(`${file.name || fallbackName} is too large (max 25 MB).`, null, "error"); return; }
+  const reader = new FileReader();
+  reader.onload = () => bridge && bridge.attachData(file.name || fallbackName, String(reader.result).split(",")[1] || "");
+  reader.readAsDataURL(file);
+}
+
+$("#attach").addEventListener("click", () => bridge && bridge.pickAttachments());
+input.addEventListener("paste", (e) => {
+  const files = [...(e.clipboardData ? e.clipboardData.items : [])].filter((it) => it.kind === "file").map((it) => it.getAsFile());
+  if (!files.length) return;  // plain text paste
+  e.preventDefault();
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  files.forEach((f, i) => attachBlob(f, `screenshot-${stamp}${i ? "-" + i : ""}.png`));
+});
+const dropzone = $("#dropzone");
+let dragDepth = 0;
+document.addEventListener("dragenter", (e) => { if ([...e.dataTransfer.types].includes("Files")) { dragDepth++; dropzone.hidden = false; } });
+document.addEventListener("dragleave", () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) dropzone.hidden = true; });
+document.addEventListener("dragover", (e) => e.preventDefault());
+document.addEventListener("drop", (e) => {
+  e.preventDefault(); dragDepth = 0; dropzone.hidden = true;
+  [...e.dataTransfer.files].forEach((f) => attachBlob(f, f.name));
+});
 
 function addAssistant(text) {
   const row = el("div", "msg assistant");
@@ -91,11 +168,73 @@ function addAssistant(text) {
   thread.appendChild(row);
 }
 
+function addCheckin(text) {
+  hideWelcome();
+  const row = el("div", "msg assistant checkin");
+  const label = el("div", "checkin-label", "✦ Check-in");
+  const content = el("div", "content");
+  renderMarkdown(content, text);
+  row.append(label, content);
+  thread.appendChild(row);
+  follow(true);
+}
+
 function actionsFor(getText) {
   const actions = el("div", "actions");
   actions.appendChild(copyButton(getText, "Copy"));
   return actions;
 }
+
+// ── generated images ──────────────────────────────────────────
+const IMG_ICONS = {
+  open: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3h7v7"/><path d="M10 14 21 3"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg>',
+  folder: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>',
+};
+
+function imageCard(url, path) {
+  const fig = el("figure", "image-card");
+  const img = el("img");
+  img.alt = "Generated image";
+  img.src = url;
+  img.addEventListener("load", () => follow());
+  img.addEventListener("click", () => openLightbox(url));
+  const bar = el("div", "image-actions");
+  const mk = (icon, title, fn) => {
+    const b = el("button", "", icon); b.type = "button"; b.title = title; b.setAttribute("aria-label", title);
+    b.addEventListener("click", (e) => { e.stopPropagation(); fn(b); });
+    return b;
+  };
+  bar.append(
+    mk(ICONS.copy, "Copy image", (b) => { bridge.copyImage(path); b.innerHTML = ICONS.check; setTimeout(() => { b.innerHTML = ICONS.copy; }, 1400); }),
+    mk(IMG_ICONS.folder, "Show in folder", () => bridge.showImageInFolder(path)),
+    mk(IMG_ICONS.open, "Open in image viewer", () => bridge.openImage(path)),
+  );
+  fig.append(img, bar);
+  return fig;
+}
+
+function addImageRow(url, path) {
+  hideWelcome();
+  const row = el("div", "msg assistant");
+  row.appendChild(imageCard(url, path));
+  thread.appendChild(row);
+}
+
+function onImage(url, path) {
+  if (!turn) startTurn();
+  settleChips();
+  if (turn.skel) { turn.skel.remove(); turn.skel = null; }
+  turn.segment = null;  // text after the image starts a new block below it
+  turn.body.appendChild(imageCard(url, path));
+  follow();
+}
+
+const lightbox = el("div", "lightbox");
+lightbox.hidden = true;
+lightbox.appendChild(el("img"));
+document.body.appendChild(lightbox);
+lightbox.addEventListener("click", () => { lightbox.hidden = true; });
+function openLightbox(url) { lightbox.querySelector("img").src = url; lightbox.hidden = false; }
 
 function addNote(text, sub, kind) {
   hideWelcome();
@@ -117,7 +256,7 @@ function startTurn() {
   const typing = el("div", "typing", "<span></span><span></span><span></span>");
   row.append(body, typing);
   thread.appendChild(row);
-  turn = { row, body, typing, segment: null, chips: [], texts: [], renderQueued: false };
+  turn = { row, body, typing, segment: null, chips: [], texts: [], ticking: false, done: false, stopped: false };
   follow(true);
 }
 
@@ -134,26 +273,56 @@ function settleChips() {
   });
 }
 
+// Smooth streaming. Groq delivers a whole reply in well under a second, which reads as "nothing, then
+// everything". Incoming text is buffered and revealed at a steady pace: faster when a lot is waiting,
+// never slower than ~180 chars/s, so a typical reply takes 2-3 seconds to type out.
 function onToken(text) {
   if (!turn) startTurn();
   turn.typing.hidden = true;
   if (!turn.segment) {
     settleChips();
-    turn.segment = { node: el("div", "content"), text: "" };
+    turn.segment = { node: el("div", "content"), text: "", shown: 0 };
     turn.body.appendChild(turn.segment.node);
     turn.texts.push(turn.segment);
   }
   turn.segment.text += text;
-  if (!turn.renderQueued) {
-    turn.renderQueued = true;
-    requestAnimationFrame(() => {
-      if (!turn) return;
-      turn.renderQueued = false;
-      if (turn.segment) renderMarkdown(turn.segment.node, turn.segment.text);
-      follow();
-    });
-  }
   setStatus("typing…", true);
+  startTicking();
+}
+
+function startTicking() {
+  if (turn && !turn.ticking) { turn.ticking = true; requestAnimationFrame(tick); }
+}
+
+function withCaret(node) {
+  // Follow the last *node* (text or element) so the caret lands after trailing plain text,
+  // not after the last bold/link element that happens to precede it.
+  // Whitespace-only text nodes (Markdown emits "\n" between blocks) don't count as content.
+  const lastReal = (n) => {
+    let c = n.lastChild;
+    while (c && c.nodeType === Node.TEXT_NODE && !c.textContent.trim()) c = c.previousSibling;
+    return c;
+  };
+  let last = node, c;
+  while ((c = lastReal(last)) && c.nodeType === Node.ELEMENT_NODE && !/^(TABLE|HR|BR)$/.test(c.tagName)) last = c;
+  if (c && c.nodeType === Node.TEXT_NODE) c.after(el("span", "caret"));
+  else last.appendChild(el("span", "caret"));
+}
+
+function tick() {
+  if (!turn) return;
+  const seg = turn.texts.find((s) => s.shown < s.text.length);  // reveal segments in order
+  if (seg) {
+    const backlog = seg.text.length - seg.shown;
+    seg.shown = Math.min(seg.text.length, seg.shown + Math.min(40, Math.max(3, Math.ceil(backlog / 90))));
+    renderMarkdown(seg.node, seg.text.slice(0, seg.shown), false);
+    withCaret(seg.node);
+    follow();
+    requestAnimationFrame(tick);
+    return;
+  }
+  turn.ticking = false;
+  if (turn.done) finishTurn();  // everything received and revealed
 }
 
 function onTool(name, running, done) {
@@ -178,22 +347,34 @@ function onTool(name, running, done) {
     turn.chips.push(chip);
   }
   chipLabel(chip, running);
+  if (name === "generate_image" && !turn.skel) {  // placeholder until the picture arrives
+    turn.skel = el("div", "image-skel", "<span>Creating image…</span>");
+    turn.body.appendChild(turn.skel);
+  }
   turn.typing.hidden = true;
   setStatus(running.toLowerCase(), true);
   follow();
 }
 
 function onTurnDone(stopped) {
-  if (turn) {
-    settleChips();
-    if (stopped) turn.body.appendChild(el("div", "stopped", "Stopped"));
-    turn.texts.forEach((s) => renderMarkdown(s.node, s.text));
-    turn.typing.remove();
-    const full = turn.texts.map((s) => s.text).join("\n\n").trim();
-    if (full) turn.row.appendChild(actionsFor(() => full));
-    if (!turn.body.children.length) turn.row.remove();
-    turn = null;
-  }
+  if (!turn) { setBusy(false); return; }
+  turn.done = true;
+  turn.stopped = stopped;
+  if (stopped) turn.texts.forEach((s) => { s.shown = s.text.length; });  // Stop: show what arrived, now
+  if (turn.ticking) return;  // tick() calls finishTurn once the reveal catches up
+  finishTurn();
+}
+
+function finishTurn() {
+  settleChips();
+  if (turn.skel) { turn.skel.remove(); turn.skel = null; }
+  if (turn.stopped) turn.body.appendChild(el("div", "stopped", "Stopped"));
+  turn.texts.forEach((s) => renderMarkdown(s.node, s.text));  // final render, with code highlighting
+  turn.typing.remove();
+  const full = turn.texts.map((s) => s.text).join("\n\n").trim();
+  if (full) turn.row.appendChild(actionsFor(() => full));
+  if (!turn.body.children.length) turn.row.remove();
+  turn = null;
   setBusy(false);
   follow();
 }
@@ -216,7 +397,7 @@ function setBusy(value) {
   if (!value) { setStatus("ready", false); input.focus(); }
 }
 
-function updateSend() { sendBtn.disabled = !busy && !input.value.trim(); }
+function updateSend() { sendBtn.disabled = !busy && !input.value.trim() && !pending.length; }
 
 function stop() {
   if (!busy || !bridge) return;
@@ -231,20 +412,24 @@ function autosize() {
 
 function send(text) {
   text = (text || "").trim();
-  if (!text || busy || !bridge) return;
-  addUser(text);
+  if ((!text && !pending.length) || busy || !bridge) return;
+  const files = pending;
+  pending = []; renderTray();
+  addUser(text, files);
   input.value = "";
   autosize();
   setBusy(true);
   setStatus("thinking…", true);
   startTurn();
-  bridge.send(text);
+  bridge.send(text, JSON.stringify(files.map((f) => f.id)));
 }
 
 $("#composer").addEventListener("submit", (e) => { e.preventDefault(); busy ? stop() : send(input.value); });
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
-  if (panel.classList.contains("open")) closePanel(); else stop();
+  if (!lightbox.hidden) lightbox.hidden = true;
+  else if (document.querySelector(".drawer.open")) closeDrawers();
+  else stop();
 });
 input.addEventListener("input", () => { autosize(); updateSend(); });
 input.addEventListener("keydown", (e) => {
@@ -269,22 +454,346 @@ document.addEventListener("click", (e) => {
 
 window.focusInput = () => input.focus();
 
+// ── tasks & notes panel ───────────────────────────────────────
+const listsPanel = $("#lists-panel"), badge = $("#lists-badge");
+let listsSnap = { tasks: [], notes: [], attention: 0 }, listEditing = false, listsPending = null;
+
+function switchTab(name) {
+  listsPanel.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
+  $("#tab-tasks").hidden = name !== "tasks";
+  $("#tab-notes").hidden = name !== "notes";
+  (name === "tasks" ? $("#task-input") : $("#note-input")).focus();
+}
+listsPanel.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => switchTab(t.dataset.tab)));
+listsPanel.querySelector(".drawer-close").addEventListener("click", closeDrawers);
+$("#lists-btn").addEventListener("click", () => { openDrawer(listsPanel); bridge && bridge.getLists(); setTimeout(() => $("#task-input").focus(), 50); });
+
+// Inline editing shared by tasks and notes. Notes are multi-line: Ctrl+Enter or clicking away saves.
+function inlineEdit(node, original, onSave, multiline) {
+  if (node.isContentEditable) return;
+  listEditing = true;
+  node.contentEditable = "true"; node.focus();
+  document.getSelection().selectAllChildren(node);
+  const finish = (save) => {
+    node.contentEditable = "false";
+    node.removeEventListener("keydown", onKey); node.removeEventListener("blur", onBlur);
+    const v = (multiline ? node.innerText : node.textContent).trim();
+    listEditing = false;
+    if (save && v && v !== original) onSave(v); else node.textContent = original;
+    if (listsPending) { const snap = listsPending; listsPending = null; renderLists(snap); }
+  };
+  const onKey = (e) => {
+    if (e.key === "Enter" && (!multiline || e.ctrlKey)) { e.preventDefault(); finish(true); }
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(false); }
+  };
+  const onBlur = () => finish(true);
+  node.addEventListener("keydown", onKey); node.addEventListener("blur", onBlur);
+}
+
+function taskItem(t) {
+  const li = el("li", t.done ? "done" : "");
+  const check = el("button", "check" + (t.done ? " on" : ""), ICONS.check);
+  check.type = "button"; check.title = t.done ? "Mark as not done" : "Mark as done";
+  check.addEventListener("click", () => bridge.setTaskDone(t.id, !t.done));
+  const text = el("span", "text"); text.textContent = t.text; text.title = "Click to edit";
+  text.addEventListener("click", () => inlineEdit(text, t.text, (v) => bridge.editTask(t.id, v), false));
+  li.append(check, text);
+  if (t.due_label && !t.done) {
+    const due = el("span", "due" + (t.overdue ? " overdue" : t.due_label.startsWith("today") ? " today" : ""));
+    due.textContent = t.overdue ? `overdue · ${t.due_label}` : t.due_label;
+    li.appendChild(due);
+  }
+  li.appendChild(removeButton(() => bridge.deleteTask(t.id), "Delete task"));
+  return li;
+}
+
+function noteItem(n) {
+  const li = el("li");
+  const body = el("div", "note-body");
+  const text = el("div", "text"); text.textContent = n.text; text.title = "Click to edit (Ctrl+Enter saves)";
+  text.addEventListener("click", () => inlineEdit(text, n.text, (v) => bridge.editNote(n.id, v), true));
+  const meta = el("div", "note-meta");
+  meta.textContent = new Date(n.created).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  body.append(text, meta);
+  li.append(body, removeButton(() => bridge.deleteNote(n.id), "Delete note"));
+  return li;
+}
+
+function renderNotes() {
+  const q = $("#note-search").value.trim().toLowerCase();
+  const shown = listsSnap.notes.filter((n) => !q || n.text.toLowerCase().includes(q));
+  const list = $("#note-list");
+  list.innerHTML = "";
+  shown.forEach((n) => list.appendChild(noteItem(n)));
+  $("#notes-empty").hidden = shown.length > 0;
+  $("#notes-empty").textContent = q ? "No notes match." : "No notes yet. Try “note: the café wifi is …”";
+}
+
+function renderLists(snap) {
+  if (listEditing) { listsPending = snap; return; }  // don't clobber an edit in progress
+  listsSnap = snap;
+  badge.hidden = !snap.attention;
+  badge.textContent = snap.attention > 9 ? "9+" : snap.attention;
+  $("#lists-btn").title = snap.attention ? `Tasks & notes (${snap.attention} due)` : "Tasks & notes";
+
+  const open = snap.tasks.filter((t) => !t.done), done = snap.tasks.filter((t) => t.done);
+  const list = $("#task-list");
+  list.innerHTML = "";
+  open.forEach((t) => list.appendChild(taskItem(t)));
+  $("#tasks-empty").hidden = open.length > 0;
+  const doneList = $("#done-list");
+  doneList.innerHTML = "";
+  done.forEach((t) => doneList.appendChild(taskItem(t)));
+  $("#done-wrap").hidden = !done.length;
+  $("#done-count").textContent = done.length || "";
+  renderNotes();
+}
+
+$("#add-task").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const text = $("#task-input").value.trim();
+  if (!text || !bridge) return;
+  bridge.addTask(text, $("#task-due").value || "");
+  $("#task-input").value = ""; $("#task-due").value = "";
+});
+$("#add-note").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const text = $("#note-input").value.trim();
+  if (!text || !bridge) return;
+  bridge.addNote(text);
+  $("#note-input").value = "";
+});
+$("#note-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && e.ctrlKey) { e.preventDefault(); $("#add-note").requestSubmit(); }
+});
+$("#note-search").addEventListener("input", renderNotes);
+
+// ── settings panel ────────────────────────────────────────────
+const settingsPanel = $("#settings-panel");
+const LABELS = { "<Super>j": "Super+J" };
+
+$("#settings-btn").addEventListener("click", () => { openDrawer(settingsPanel); bridge && bridge.getSettings(); });
+settingsPanel.querySelector(".drawer-close").addEventListener("click", closeDrawers);
+$("#open-data").addEventListener("click", () => bridge && bridge.openDataFolder());
+
+function saveSetting(name, value) { bridge && bridge.saveSetting(name, JSON.stringify(value)); }
+
+function renderSettings(snap) {
+  settingsPanel.querySelectorAll("input[data-setting]").forEach((inp) => {
+    const v = snap[inp.dataset.setting];
+    if (inp.type === "checkbox") inp.checked = !!v;
+    else if (document.activeElement !== inp) inp.value = v || "";  // don't clobber typing
+  });
+  settingsPanel.querySelectorAll(".segmented").forEach((seg) => {
+    seg.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.value === snap[seg.dataset.setting]));
+  });
+  const sel = settingsPanel.querySelector('select[data-setting="chat_model"]');
+  sel.innerHTML = "";
+  snap.models.forEach((m) => { const o = el("option"); o.value = m; o.textContent = m; sel.appendChild(o); });
+  sel.value = snap.chat_model;
+  settingsPanel.querySelectorAll(".key-field").forEach((f) => {
+    const masked = snap[f.dataset.key];
+    f.querySelector("input").placeholder = masked ? `Saved (${masked}). Paste a new key to replace it` : "Paste your key";
+  });
+  $("#hotkey-label").textContent = snap.hotkey ? `${LABELS[snap.hotkey] || snap.hotkey} shows or hides the window` : "Off";
+  renderDocuments(snap.documents, snap.data_dir);
+}
+
+function renderDocuments(d, dataDir) {
+  const list = $("#doc-folders");
+  list.innerHTML = "";
+  const home = (dataDir.match(/^\/home\/[^/]+/) || [""])[0];
+  d.folders.forEach((f) => {
+    const li = el("li");
+    const t = el("span", "text"); t.textContent = home && f.startsWith(home) ? "~" + f.slice(home.length) : f;
+    li.append(t, removeButton(() => saveSetting("doc_remove", f), "Stop searching this folder"));
+    list.appendChild(li);
+  });
+  const status = $("#doc-status");
+  status.className = "key-status" + (d.error ? " err" : "");
+  if (d.error) status.textContent = d.error;
+  else if (d.running) status.textContent = `Indexing… ${d.done}/${d.total} files`;
+  else if (!d.folders.length) status.textContent = "No folders yet.";
+  else {
+    const n = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
+    status.textContent = `${n(d.files, "file")} · ${n(d.passages, "passage")} indexed`;
+  }
+  $("#doc-reindex").disabled = !d.folders.length || d.running;
+}
+$("#doc-add").addEventListener("click", () => bridge && bridge.pickFolder());
+$("#doc-reindex").addEventListener("click", () => saveSetting("doc_reindex", true));
+
+settingsPanel.querySelectorAll('input[data-setting]:not([type="checkbox"])').forEach((inp) =>
+  inp.addEventListener("change", () => saveSetting(inp.dataset.setting, inp.value)));
+settingsPanel.querySelectorAll('input[type="checkbox"][data-setting]').forEach((inp) =>
+  inp.addEventListener("change", () => saveSetting(inp.dataset.setting, inp.checked)));
+settingsPanel.querySelector('select[data-setting="chat_model"]').addEventListener("change", (e) => saveSetting("chat_model", e.target.value));
+settingsPanel.querySelectorAll(".segmented").forEach((seg) => seg.querySelectorAll("button").forEach((b) =>
+  b.addEventListener("click", () => {
+    seg.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+    saveSetting(seg.dataset.setting, b.dataset.value);
+  })));
+settingsPanel.querySelectorAll(".key-field").forEach((f) => f.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const v = f.querySelector("input").value.trim();
+  if (!v && f.dataset.key === "groq_key") return;  // the Groq key can't be removed; others can (empty = remove)
+  const status = f.querySelector(".key-status");
+  status.className = "key-status"; status.textContent = "Checking…";
+  f.querySelector("button").disabled = true;
+  saveSetting(f.dataset.key, v);
+}));
+
+function onSettingResult(name, ok, message) {
+  const keyField = settingsPanel.querySelector(`.key-field[data-key="${name}"]`);
+  if (keyField) {
+    const status = keyField.querySelector(".key-status");
+    status.className = "key-status " + (ok ? "ok" : "err");
+    status.textContent = (ok ? "✓ " : "") + message;
+    keyField.querySelector("button").disabled = false;
+    if (ok) keyField.querySelector("input").value = "";
+    return;
+  }
+  if (!ok) addNote(message, null, "error");
+  else showToast([message], "Settings");
+}
+
+// ── chat history sidebar ──────────────────────────────────────
+const app = $("#app"), chatList = $("#chat-list"), chatSearch = $("#chat-search");
+const PENCIL = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+const TRASH = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>';
+let chats = { threads: [], current: null }, searchTimer = null, searching = false;
+
+function storeGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function storeSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private mode etc. */ } }
+
+function setSidebar(open, remember) {
+  app.classList.toggle("side-closed", !open);
+  if (remember) storeSet("sidebar", open ? "open" : "closed");
+}
+const savedSidebar = storeGet("sidebar");
+setSidebar(savedSidebar ? savedSidebar === "open" : window.innerWidth >= 1000, false);
+$("#side-toggle").addEventListener("click", () => setSidebar(app.classList.contains("side-closed"), true));
+$("#side-scrim").addEventListener("click", () => setSidebar(false, false));
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") { e.preventDefault(); $("#side-toggle").click(); }
+});
+const narrow = () => window.innerWidth <= 760;
+
+function groupLabel(iso) {
+  const d = new Date(iso), now = new Date();
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(now) - day(d)) / 86400000);
+  if (diff <= 0) return "Today";
+  if (diff === 1) return "Yesterday";
+  if (diff < 7) return "Previous 7 days";
+  if (diff < 30) return "Previous 30 days";
+  return d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+}
+
+function chatItem(t, snippet) {
+  const item = el("div", "chat-item" + (t.id === chats.current ? " active" : ""));
+  item.dataset.id = t.id;
+  const text = el("span", "chat-text");
+  const title = el("span", "chat-title"); title.textContent = t.title || "Untitled chat";
+  text.appendChild(title);
+  if (snippet) { const sn = el("span", "chat-snippet"); sn.textContent = snippet; text.appendChild(sn); }
+  const actions = el("span", "chat-actions");
+  const ren = el("button", "", PENCIL); ren.title = "Rename"; ren.type = "button";
+  const del = el("button", "del", TRASH); del.title = "Delete"; del.type = "button";
+  actions.append(ren, del);
+  item.append(text, actions);
+
+  item.addEventListener("click", (e) => {
+    if (e.target.closest(".chat-actions") || title.isContentEditable || item.classList.contains("confirming")) return;
+    if (busy || !bridge) return;
+    bridge.openThread(t.id);
+    if (narrow()) setSidebar(false, false);
+  });
+  ren.addEventListener("click", (e) => { e.stopPropagation(); renameChat(title, t); });
+  del.addEventListener("click", (e) => { e.stopPropagation(); confirmDelete(item, t); });
+  return item;
+}
+
+function renameChat(title, t) {
+  title.contentEditable = "true"; title.focus();
+  document.getSelection().selectAllChildren(title);
+  const finish = (save) => {
+    title.contentEditable = "false";
+    title.removeEventListener("keydown", onKey); title.removeEventListener("blur", onBlur);
+    const v = title.textContent.trim();
+    if (save && v && v !== t.title) bridge.renameThread(t.id, v); else title.textContent = t.title;
+  };
+  const onKey = (e) => {
+    if (e.key === "Enter") { e.preventDefault(); finish(true); }
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(false); }
+  };
+  const onBlur = () => finish(true);
+  title.addEventListener("keydown", onKey); title.addEventListener("blur", onBlur);
+}
+
+function confirmDelete(item, t) {
+  if (busy && t.id === chats.current) return;
+  item.classList.add("confirming");
+  item.innerHTML = "";
+  const q = el("span", "confirm-text"); q.textContent = "Delete this chat?";
+  const actions = el("span", "chat-actions");
+  const yes = el("button", "confirm-yes", "Delete"); yes.type = "button";
+  const no = el("button", "", '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>');
+  no.type = "button"; no.title = "Cancel";
+  actions.append(yes, no);
+  item.append(q, actions);
+  yes.addEventListener("click", (e) => { e.stopPropagation(); bridge.deleteThread(t.id); });
+  no.addEventListener("click", (e) => { e.stopPropagation(); renderChats(); });
+}
+
+function renderChats() {
+  if (searching) return;
+  chatList.innerHTML = "";
+  if (!chats.threads.length) { chatList.appendChild(el("div", "chat-empty", "Your chats will show up here.")); return; }
+  let last = null;
+  chats.threads.forEach((t) => {
+    const g = groupLabel(t.updated);
+    if (g !== last) { const h = el("div", "chat-group"); h.textContent = g; chatList.appendChild(h); last = g; }
+    chatList.appendChild(chatItem(t));
+  });
+}
+
+function renderSearch(results) {
+  chatList.innerHTML = "";
+  if (!results.length) { chatList.appendChild(el("div", "chat-empty", "No chats match.")); return; }
+  const h = el("div", "chat-group"); h.textContent = `${results.length} result${results.length > 1 ? "s" : ""}`;
+  chatList.appendChild(h);
+  results.forEach((r) => chatList.appendChild(chatItem(r, r.snippet)));
+}
+
+chatSearch.addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  const q = chatSearch.value.trim();
+  if (!q) { searching = false; renderChats(); return; }
+  searchTimer = setTimeout(() => { searching = true; bridge && bridge.searchChats(q); }, 220);
+});
+chatSearch.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { e.stopPropagation(); chatSearch.value = ""; searching = false; renderChats(); input.focus(); }
+});
+$("#side-new").addEventListener("click", () => { newChatBtn.click(); if (narrow()) setSidebar(false, false); });
+
 // ── memory panel ──────────────────────────────────────────────
 const panel = $("#memory-panel"), backdrop = $("#backdrop"), toast = $("#toast");
 const X_ICON = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
 let lastSnapshot = null, freshTexts = new Set(), toastTimer = null, forgetArmed = null;
 
-function openPanel() {
-  panel.classList.add("open"); panel.setAttribute("aria-hidden", "false"); backdrop.hidden = false;
-  bridge && bridge.getMemory();
+function hideDrawers() {
+  document.querySelectorAll(".drawer.open").forEach((d) => { d.classList.remove("open"); d.setAttribute("aria-hidden", "true"); });
 }
-function closePanel() {
-  panel.classList.remove("open"); panel.setAttribute("aria-hidden", "true"); backdrop.hidden = true;
-  input.focus();
+function openDrawer(d) {
+  hideDrawers();
+  d.classList.add("open"); d.setAttribute("aria-hidden", "false"); backdrop.hidden = false;
 }
+function closeDrawers() { hideDrawers(); backdrop.hidden = true; input.focus(); }
+function openPanel() { openDrawer(panel); bridge && bridge.getMemory(); }
 $("#memory-btn").addEventListener("click", openPanel);
-$("#memory-close").addEventListener("click", closePanel);
-backdrop.addEventListener("click", closePanel);
+$("#memory-close").addEventListener("click", closeDrawers);
+backdrop.addEventListener("click", closeDrawers);
 
 function removeButton(onClick, label) {
   const b = el("button", "remove", X_ICON);
@@ -370,18 +879,21 @@ $("#forget-all").addEventListener("click", (e) => {
   forgetArmed = setTimeout(() => { forgetArmed = null; btn.textContent = "Forget everything"; }, 4000);
 });
 
-function showToast(changes) {
+function showToast(changes, heading) {
   if (!changes.length) return;
-  freshTexts = new Set(changes.map((c) => c.replace(/^[^:]+:\s*/, "")));
+  if (!heading) freshTexts = new Set(changes.map((c) => c.replace(/^[^:]+:\s*/, "")));
   toast.innerHTML = "";
-  const title = el("b"); title.textContent = "Memory updated";
+  const title = el("b"); title.textContent = heading || "Memory updated";
   const detail = el("span"); detail.textContent = changes[0] + (changes.length > 1 ? `  (+${changes.length - 1} more)` : "");
   toast.append(title, detail);
   toast.hidden = false;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { toast.hidden = true; }, 6000);
 }
-toast.addEventListener("click", () => { toast.hidden = true; openPanel(); });
+toast.addEventListener("click", () => {
+  toast.hidden = true;
+  if (toast.firstChild && toast.firstChild.textContent === "Memory updated") openPanel();
+});
 
 // ── wiring to Python ──────────────────────────────────────────
 new QWebChannel(qt.webChannelTransport, (channel) => {
@@ -396,17 +908,22 @@ new QWebChannel(qt.webChannelTransport, (channel) => {
     document.title = cfg.assistant;
     input.placeholder = `Message ${cfg.assistant}…`;
     window.USER_NAME = cfg.user;
-    if (cfg.error) { addNote(cfg.error, "Fix your .env file and restart.", "error"); input.disabled = true; }
+    if (!welcome.hidden) showWelcome();  // refresh the greeting after a name change
+    if (cfg.error) addNote(cfg.error, "Add your Groq API key in Settings (⚙ at the top right).", "error");
+    input.disabled = !!cfg.error;  // re-enabled once a working key is saved in Settings
   });
   bridge.history.connect((json) => {
     const items = JSON.parse(json);
     thread.innerHTML = "";
-    items.forEach(([role, text]) => (role === "user" ? addUser(text) : addAssistant(text)));
+    items.forEach(([role, text, path]) =>
+      role === "user" ? addUser(text, path) : role === "image" ? addImageRow(text, path)
+        : role === "checkin" ? addCheckin(text) : addAssistant(text));
     if (!items.length) showWelcome(); else hideWelcome();
     follow(true);
   });
   bridge.token.connect(onToken);
   bridge.tool.connect(onTool);
+  bridge.image.connect(onImage);
   bridge.turnDone.connect(onTurnDone);
   bridge.status.connect((text) => setStatus(text, true));
   bridge.failed.connect((msg) => {
@@ -415,6 +932,14 @@ new QWebChannel(qt.webChannelTransport, (channel) => {
   });
   bridge.note.connect((text, sub) => addNote(text, sub));
   bridge.memory.connect((json) => renderMemory(JSON.parse(json)));
+  bridge.threads.connect((json) => { chats = JSON.parse(json); renderChats(); });
+  bridge.lists.connect((json) => renderLists(JSON.parse(json)));
+  bridge.settings.connect((json) => renderSettings(JSON.parse(json)));
+  bridge.settingResult.connect(onSettingResult);
+  bridge.checkin.connect(addCheckin);
+  bridge.attached.connect((json) => { pending = pending.concat(JSON.parse(json)); renderTray(); updateSend(); input.focus(); });
+  bridge.attachError.connect((msg) => addNote(msg, null, "error"));
+  bridge.searchResults.connect((json) => { if (searching) renderSearch(JSON.parse(json)); });
   bridge.memorySaved.connect((json) => showToast(JSON.parse(json)));
 
   bridge.ready();

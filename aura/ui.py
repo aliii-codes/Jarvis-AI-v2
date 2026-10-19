@@ -1,50 +1,97 @@
 """Desktop window: a local web page (aura/web) rendered by QtWebEngine, driven over QWebChannel."""
+import base64
 import json
+import time
+from pathlib import Path
 import shutil
 import subprocess
 import sys
 from datetime import datetime, timedelta
 
 from PyQt5.QtCore import QObject, Qt, QThread, QTimer, QUrl, pyqtSignal, pyqtSlot
-from PyQt5.QtGui import QColor, QDesktopServices, QGuiApplication, QKeySequence
+from PyQt5.QtGui import QColor, QDesktopServices, QGuiApplication, QImage, QKeySequence
 from PyQt5.QtNetwork import QLocalServer
 from PyQt5.QtWebChannel import QWebChannel
 from PyQt5.QtWebEngineWidgets import QWebEnginePage, QWebEngineView
-from PyQt5.QtWidgets import QApplication, QMainWindow, QShortcut
+from PyQt5.QtWidgets import QApplication, QFileDialog, QMainWindow, QShortcut
 
-from . import config, instance, learner, memory, reminders, tools
+from . import attachments, checkins, config, documents, embeddings, instance, learner, lists, memory, reminders, settings, threads, tools
 from .agent import Aura
 
 WEB_DIR = config.ROOT / "aura" / "web"
 LEARN_AFTER_IDLE_MS = 45_000  # learn once the user pauses, so it doesn't compete with chat for rate limits
 BACKGROUND = {"dark": "#0e0e11", "light": "#ffffff"}  # matches app.css, avoids a white flash on load
 
+
+def _file_url(path: str) -> str:
+    return QUrl.fromLocalFile(path).toString()
+
+
+def _attachment_view(meta: dict) -> dict:
+    return {"id": meta["id"], "name": meta["name"], "kind": meta["kind"], "url": _file_url(meta["path"])}
+
+
+def _history_json(aura: Aura | None) -> str:
+    """History for the page; images become [role, url, path], user messages may carry attachments."""
+    rows = []
+    for row in (aura.history() if aura else []):
+        role, text = row[0], row[1]
+        if role == "image":
+            rows.append(["image", _file_url(text), text])
+        elif role == "user" and len(row) > 2:
+            rows.append(["user", text, [_attachment_view(m) for m in row[2] if Path(m["path"]).exists()]])
+        else:
+            rows.append([role, text])
+    return json.dumps(rows)
+
+
+def _generated_image(path: str) -> Path | None:
+    """Only files AURA generated (inside Data/images) may be opened or copied from the page."""
+    p = Path(path).resolve()
+    return p if p.is_file() and p.is_relative_to((config.DATA_DIR / "images").resolve()) else None
+
 # (while running, when done) — shown as chips under the user's message.
 TOOL_LABELS = {
     "web_search": ("Searching the web", "Searched the web"),
+    "research": ("Researching", "Researched"),
     "read_url": ("Reading the page", "Read the page"),
     "get_weather": ("Checking the weather", "Checked the weather"),
-    "open_app": ("Opening app", "Opened app"),
-    "close_app": ("Closing app", "Closed app"),
-    "open_website": ("Opening website", "Opened website"),
-    "search_in_browser": ("Opening search", "Opened search"),
-    "play_on_youtube": ("Finding on YouTube", "Opened YouTube"),
+    "app:open": ("Opening app", "Opened app"),
+    "app:close": ("Closing app", "Closed app"),
+    "browser:open_website": ("Opening website", "Opened website"),
+    "browser:google": ("Opening search", "Opened search"),
+    "browser:youtube_search": ("Opening YouTube", "Opened YouTube"),
+    "browser:play_youtube": ("Finding on YouTube", "Playing on YouTube"),
     "set_volume": ("Changing volume", "Changed volume"),
     "save_document": ("Saving document", "Saved document"),
+    "files:list": ("Looking in folder", "Looked in folder"),
+    "files:find": ("Searching files", "Searched files"),
+    "files:read": ("Reading file", "Read file"),
+    "files:open_folder": ("Opening folder", "Opened folder"),
     "generate_image": ("Generating image", "Generated image"),
-    "read_clipboard": ("Reading clipboard", "Read clipboard"),
-    "copy_to_clipboard": ("Copying", "Copied to clipboard"),
-    "list_folder": ("Looking in folder", "Looked in folder"),
-    "find_files": ("Searching files", "Searched files"),
-    "read_file": ("Reading file", "Read file"),
-    "set_reminder": ("Setting reminder", "Set reminder"),
-    "list_reminders": ("Checking reminders", "Checked reminders"),
-    "cancel_reminder": ("Cancelling reminder", "Cancelled reminder"),
-    "remember": ("Saving to memory", "Saved to memory"),
-    "forget": ("Forgetting", "Forgot"),
-    "recall": ("Checking memory", "Checked memory"),
+    "clipboard:read": ("Reading clipboard", "Read clipboard"),
+    "clipboard:copy": ("Copying", "Copied to clipboard"),
+    "reminders:set": ("Setting reminder", "Set reminder"),
+    "reminders:list": ("Checking reminders", "Checked reminders"),
+    "reminders:cancel": ("Cancelling reminder", "Cancelled reminder"),
+    "memory:remember": ("Saving to memory", "Saved to memory"),
+    "memory:forget": ("Forgetting", "Forgot"),
+    "memory:recall": ("Checking memory", "Checked memory"),
+    "tasks:add": ("Adding task", "Added task"),
+    "tasks:list": ("Checking tasks", "Checked tasks"),
+    "tasks:done": ("Completing task", "Completed task"),
+    "tasks:delete": ("Deleting task", "Deleted task"),
+    "notes:save": ("Saving note", "Saved note"),
+    "notes:search": ("Searching notes", "Searched notes"),
+    "notes:delete": ("Deleting note", "Deleted note"),
+    "documents": ("Searching your documents", "Searched your documents"),
     "quit_aura": ("Closing", "Closing"),
 }
+
+
+def effective_theme() -> str:
+    """The theme setting, with "system" resolved to light or dark."""
+    return config.THEME if config.THEME in ("light", "dark") else system_theme()
 
 
 def system_theme() -> str:
@@ -64,27 +111,45 @@ class Worker(QThread):
     """Runs one agent turn off the UI thread."""
     token = pyqtSignal(str)
     tool = pyqtSignal(str)
+    image = pyqtSignal(str)
     status = pyqtSignal(str)
     failed = pyqtSignal(str)
 
-    def __init__(self, aura: Aura, text: str):
+    def __init__(self, aura: Aura, text: str, files: list[dict] | None = None):
         super().__init__()
-        self.aura, self.text = aura, text
+        self.aura, self.text, self.files = aura, text, files or []
         self.stopped = False
 
     def run(self):
         try:
-            for event in self.aura.stream(self.text):
+            for event in self.aura.stream(self.text, self.files):
                 if event.kind == "token":
                     self.token.emit(event.text)
                 elif event.kind == "tool":
                     self.tool.emit(event.text)
                 elif event.kind == "status":
                     self.status.emit(event.text)
+                elif event.kind == "image":
+                    self.image.emit(event.text)
                 elif event.kind == "stopped":
                     self.stopped = True
         except Exception as e:
             self.failed.emit(f"{type(e).__name__}: {e}")
+
+
+class Task(QThread):
+    """Run a blocking call (network: model list, key check) off the UI thread."""
+    done = pyqtSignal(object, object)  # (result, error)
+
+    def __init__(self, fn):
+        super().__init__()
+        self.fn = fn
+
+    def run(self):
+        try:
+            self.done.emit(self.fn(), None)
+        except Exception as e:
+            self.done.emit(None, e)
 
 
 class LearnWorker(QThread):
@@ -130,10 +195,17 @@ class WebBridge(QObject):
     history = pyqtSignal(str)
     token = pyqtSignal(str)
     tool = pyqtSignal(str, str, str)
+    image = pyqtSignal(str, str)     # (file URL for <img>, local path for actions)
     status = pyqtSignal(str)
     turnDone = pyqtSignal(bool)  # True if the user stopped it
     memory = pyqtSignal(str)       # full snapshot for the Memory panel
     memorySaved = pyqtSignal(str)  # list of changes the learner just made
+    threads = pyqtSignal(str)        # {"threads": [...], "current": id} for the history sidebar
+    searchResults = pyqtSignal(str)
+    lists = pyqtSignal(str)          # tasks & notes snapshot (+ count for the header badge)
+    settings = pyqtSignal(str)
+    settingResult = pyqtSignal(str, bool, str)  # (setting, ok, message)
+    checkin = pyqtSignal(str)        # a gentle check-in added to the current chat
     failed = pyqtSignal(str)
     note = pyqtSignal(str, str)
 
@@ -145,9 +217,37 @@ class WebBridge(QObject):
     def ready(self):
         self.window.page_ready()
 
+    attached = pyqtSignal(str)       # attachments ready to show in the composer
+    attachError = pyqtSignal(str)
+
+    @pyqtSlot(str, str)
+    def send(self, text: str, attachment_ids_json: str):
+        # Only ids of files already copied into Data/attachments are accepted from the page.
+        files = [m for m in (attachments.get(i) for i in json.loads(attachment_ids_json or "[]")) if m]
+        self.window.send(text, files)
+
+    @pyqtSlot()
+    def pickAttachments(self):
+        paths, _ = QFileDialog.getOpenFileNames(
+            self.window, "Attach images or documents", str(Path.home()),
+            "Images and documents (*.png *.jpg *.jpeg *.webp *.gif *.bmp *.pdf *.docx *.txt *.md *.csv *.json *.py);;All files (*)")
+        self._attach(lambda: [attachments.add_file(p) for p in paths])
+
+    @pyqtSlot(str, str)
+    def attachData(self, name: str, b64: str):
+        """A pasted screenshot or a file dropped onto the window."""
+        self._attach(lambda: [attachments.add_bytes(name, base64.b64decode(b64))])
+
+    def _attach(self, fn):
+        try:
+            self.attached.emit(json.dumps([_attachment_view(m) for m in fn()]))
+        except (ValueError, OSError) as e:
+            self.attachError.emit(str(e))
+
     @pyqtSlot(str)
-    def send(self, text: str):
-        self.window.send(text)
+    def openAttachment(self, attachment_id: str):
+        if meta := attachments.get(attachment_id):
+            tools.open_path(meta["path"])
 
     @pyqtSlot()
     def stop(self):
@@ -159,6 +259,128 @@ class WebBridge(QObject):
         if self.window.aura and not self.window.worker:
             self.window.learn_now()  # learn from the conversation being archived
             self.window.aura.new_chat()
+            self.window.push_threads()
+
+    # Tasks & notes panel. Every change pushes a fresh snapshot back to the page.
+    def _push_lists(self):
+        self.lists.emit(json.dumps(lists.snapshot()))
+
+    @pyqtSlot()
+    def getLists(self):
+        self._push_lists()
+
+    @pyqtSlot(str, str)
+    def addTask(self, text: str, due: str):
+        try:
+            lists.add_task(text, due)
+        except ValueError as e:
+            self.failed.emit(str(e))
+        self._push_lists()
+
+    @pyqtSlot(str, bool)
+    def setTaskDone(self, key: str, done: bool):
+        lists.set_done(key, done)
+        self._push_lists()
+
+    @pyqtSlot(str, str)
+    def editTask(self, key: str, text: str):
+        lists.edit_task(key, text=text)
+        self._push_lists()
+
+    @pyqtSlot(str)
+    def deleteTask(self, key: str):
+        lists.delete_task(key)
+        self._push_lists()
+
+    @pyqtSlot(str)
+    def addNote(self, text: str):
+        if text.strip():
+            lists.add_note(text)
+        self._push_lists()
+
+    @pyqtSlot(str, str)
+    def editNote(self, key: str, text: str):
+        lists.edit_note(key, text)
+        self._push_lists()
+
+    @pyqtSlot(str)
+    def deleteNote(self, key: str):
+        lists.delete_note(key)
+        self._push_lists()
+
+    # Settings panel (blocking work like checking a key runs on a background Task).
+    def _run(self, fn, on_done):
+        task = Task(fn)
+        task.done.connect(on_done)
+        task.finished.connect(lambda: self.window.tasks.remove(task))
+        self.window.tasks.append(task)
+        task.start()
+
+    @pyqtSlot()
+    def getSettings(self):
+        self._run(settings.snapshot, lambda snap, err: snap and self.settings.emit(json.dumps(snap)))
+
+    @pyqtSlot(str, str)
+    def saveSetting(self, name: str, value_json: str):
+        value = json.loads(value_json)
+
+        def done(result, err):
+            if err:
+                self.settingResult.emit(name, False, str(err) if isinstance(err, ValueError) else f"Couldn't save: {err}")
+                return
+            message, rebuild = result
+            self.window.after_setting(name, rebuild)
+            self.settingResult.emit(name, True, message)
+            self.getSettings()
+
+        self._run(lambda: settings.apply(name, value), done)
+
+    @pyqtSlot()
+    def pickFolder(self):
+        """Native folder picker for Settings → Documents."""
+        folder = QFileDialog.getExistingDirectory(self.window, "Choose a folder to search", str(Path.home()))
+        if folder:
+            self.saveSetting("doc_add", json.dumps(folder))
+
+    @pyqtSlot()
+    def openDataFolder(self):
+        tools.open_path(str(config.DATA_DIR))
+
+    # Chat history sidebar.
+    @pyqtSlot()
+    def listThreads(self):
+        self.window.push_threads()
+
+    @pyqtSlot(str)
+    def openThread(self, thread_id: str):
+        w = self.window
+        if not w.aura or w.worker or thread_id == w.aura.thread_id:
+            return
+        w.learn_now()
+        w.aura.open_thread(thread_id)
+        self.history.emit(_history_json(w.aura))
+        w.push_threads()
+
+    @pyqtSlot(str, str)
+    def renameThread(self, thread_id: str, title: str):
+        threads.rename(thread_id, title)
+        self.window.push_threads()
+
+    @pyqtSlot(str)
+    def deleteThread(self, thread_id: str):
+        w = self.window
+        if not w.aura or (w.worker and thread_id == w.aura.thread_id):
+            return
+        if thread_id == w.aura.thread_id:
+            w.aura.new_chat()
+            self.history.emit("[]")
+        threads.delete(w.aura.checkpointer, thread_id)
+        w.push_threads()
+
+    @pyqtSlot(str)
+    def searchChats(self, query: str):
+        if self.window.aura:
+            self.searchResults.emit(json.dumps(threads.search(self.window.aura.graph, query)))
 
     # Memory panel. Every change pushes a fresh snapshot back to the page.
     def _push_memory(self):
@@ -206,6 +428,22 @@ class WebBridge(QObject):
     def openUrl(self, url: str):
         QDesktopServices.openUrl(QUrl(url))
 
+    # Actions on generated images shown in the chat.
+    @pyqtSlot(str)
+    def openImage(self, path: str):
+        if p := _generated_image(path):
+            tools.open_path(str(p))
+
+    @pyqtSlot(str)
+    def showImageInFolder(self, path: str):
+        if p := _generated_image(path):
+            tools.open_path(str(p.parent))
+
+    @pyqtSlot(str)
+    def copyImage(self, path: str):
+        if p := _generated_image(path):
+            QApplication.clipboard().setImage(QImage(str(p)))
+
 
 class _Page(QWebEnginePage):
     def acceptNavigationRequest(self, url, nav_type, is_main_frame):
@@ -226,7 +464,11 @@ class ChatWindow(QMainWindow):
         self.resize(900, 820)
         self.setMinimumSize(420, 520)
         self.worker: Worker | None = None
-        self.theme = system_theme()
+        self.tasks: list[Task] = []
+        self.rebuild_pending = False
+        self.checkin_running = False
+        self.last_activity = 0.0  # time of the last turn; check-ins wait until the user has been quiet a bit
+        self.theme = effective_theme()
 
         self.aura, self.startup_error = None, ""
         try:
@@ -257,6 +499,12 @@ class ChatWindow(QMainWindow):
         self.reminder_timer.start()
         QTimer.singleShot(0, self._fire_reminders)  # anything that came due while AURA was closed
 
+        # Documents: load the embedding model early (first question shouldn't stall), then catch up on
+        # indexing; re-check every 30 minutes for new or changed files.
+        self.doc_timer = QTimer(self, interval=30 * 60_000, timeout=self.index_documents)
+        self.doc_timer.start()
+        QTimer.singleShot(3000, self.index_documents)
+
         # Background memory agent: runs after the user goes quiet, and once shortly after startup.
         self.learners: list[LearnWorker] = []
         self.learn_timer = QTimer(self, singleShot=True, interval=LEARN_AFTER_IDLE_MS, timeout=self.learn_now)
@@ -266,33 +514,97 @@ class ChatWindow(QMainWindow):
         quit_shortcut.setContext(Qt.ApplicationShortcut)
         quit_shortcut.activated.connect(self.quit)
 
-    def page_ready(self):
-        """The page has connected to the bridge: send settings and the saved conversation."""
+    def send_init(self):
         self.web.init.emit(json.dumps({
             "assistant": config.ASSISTANT_NAME, "user": config.USERNAME,
             "theme": self.theme, "error": self.startup_error,
         }))
-        self.web.history.emit(json.dumps(self.aura.history() if self.aura else []))
+
+    def after_setting(self, name: str, rebuild: bool):
+        """Apply a saved setting to the running app."""
+        if name in ("username", "assistant_name", "theme"):
+            self.theme = effective_theme()
+            self.view.page().setBackgroundColor(QColor(BACKGROUND[self.theme]))
+            self.setStyleSheet(f"QMainWindow {{ background: {BACKGROUND[self.theme]}; }}")
+            self.setWindowTitle(config.ASSISTANT_NAME)
+            self.send_init()
+        if name in ("learning",):
+            self.web.memory.emit(json.dumps(memory.snapshot()))
+        if name in ("doc_add", "doc_remove", "doc_reindex"):
+            self.index_documents()
+        if rebuild:
+            if self.worker:
+                self.rebuild_pending = True  # don't pull the agent out from under a reply in progress
+            else:
+                self.rebuild_agent()
+
+    def rebuild_agent(self):
+        """Recreate the agent with the current settings (model, key, reply length); same conversation."""
+        self.rebuild_pending = False
+        try:
+            self.aura = Aura()
+            if self.startup_error:  # e.g. the first working key was just saved
+                self.startup_error = ""
+                self.send_init()
+                self.web.history.emit(_history_json(self.aura))
+                self.push_threads()
+        except Exception as e:
+            self.web.failed.emit(f"Couldn't apply the new settings: {e}")
+
+    def page_ready(self):
+        """The page has connected to the bridge: send settings and the saved conversation."""
+        self.send_init()
+        self.web.history.emit(_history_json(self.aura))
+        self.push_threads()
+        self.web.lists.emit(json.dumps(lists.snapshot()))
         self.page_is_ready = True
         for note in self.pending_notes:
             self.web.note.emit(*note)
         self.pending_notes.clear()
 
-    def send(self, text: str):
+    def send(self, text: str, files: list[dict] | None = None):
         if not self.aura or self.worker:
             return
-        self.worker = Worker(self.aura, text)
+        self.worker = Worker(self.aura, text, files)
         self.worker.token.connect(self.web.token)
         self.worker.tool.connect(lambda name: self.web.tool.emit(name, *TOOL_LABELS.get(name, (name, name))))
         self.worker.status.connect(self.web.status)
+        self.worker.image.connect(lambda path: self.web.image.emit(_file_url(path), path))
         self.worker.failed.connect(self.web.failed)
         self.worker.finished.connect(self._on_finished)
         self.worker.start()
 
+    def index_documents(self):
+        if documents.progress["running"]:
+            return
+
+        def work():
+            embeddings.warm_up()
+            return documents.index_all() if documents.folders() else None
+
+        def done(result, err):
+            self.web.getSettings()  # refresh the Settings panel's status line (and pick up errors)
+
+        self.web._run(work, done)
+        # While indexing, refresh the status line every 2s so progress is visible.
+        poll = QTimer(self, interval=2000)
+        poll.timeout.connect(lambda: (self.web.getSettings() if documents.progress["running"] else poll.stop()))
+        poll.start()
+
+    def push_threads(self):
+        if self.aura:
+            self.web.threads.emit(json.dumps({"threads": threads.list_threads(self.aura.graph),
+                                              "current": self.aura.thread_id}))
+
     def _on_finished(self):
         stopped = self.worker.stopped
         self.worker = None
+        self.last_activity = time.monotonic()
+        if self.rebuild_pending:
+            self.rebuild_agent()
         self.web.turnDone.emit(stopped)
+        self.push_threads()  # a new chat appears / the current one moves to the top
+        self.web.lists.emit(json.dumps(lists.snapshot()))  # the agent may have changed tasks or notes
         self.learn_timer.start()  # (re)start the idle countdown
 
     def learn_now(self):
@@ -315,7 +627,30 @@ class ChatWindow(QMainWindow):
             self.web.memorySaved.emit(json.dumps(changes))
         self.web.memory.emit(json.dumps(memory.snapshot()))
 
+    def maybe_checkin(self):
+        """At most once a day, when the user is looking at an idle AURA, maybe ask about something specific."""
+        if (not self.aura or not self.page_is_ready or not self.isVisible() or self.worker or self.checkin_running
+                or time.monotonic() - self.last_activity < 180 or not checkins.due()):
+            return
+        self.checkin_running = True
+
+        def done(message, err):
+            self.checkin_running = False
+            if err or not message or self.worker:  # best-effort: skip quietly (and never interrupt a reply)
+                return
+            if checkins.deliver(self.aura, message):  # started a new chat for today
+                self.web.history.emit(_history_json(self.aura))
+                self.push_threads()
+            else:
+                self.web.checkin.emit(message)
+
+        self.web._run(checkins.generate, done)
+
     def _fire_reminders(self):
+        self.maybe_checkin()
+        self._ticks = getattr(self, "_ticks", 0) + 1
+        if self.page_is_ready and self._ticks % 4 == 0:  # once a minute: due/overdue badge stays current
+            self.web.lists.emit(json.dumps(lists.snapshot()))
         for _id, message, due_at in reminders.due():
             late = datetime.now() - due_at > timedelta(minutes=2)
             note = (message, f"Missed reminder, was due {due_at:%a %H:%M}" if late else f"Reminder · {due_at:%H:%M}")
@@ -361,6 +696,7 @@ class ChatWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
         self.view.setFocus()
+        QTimer.singleShot(1500, self.maybe_checkin)  # the user just opened AURA
         self.view.page().runJavaScript("window.focusInput && focusInput()")
 
 

@@ -57,3 +57,15 @@ def uninstall() -> str:
         _gsettings("set", SCHEMA, "custom-keybindings", str([b for b in bindings if b != PATH]))
     subprocess.run(["gsettings", "reset-recursively", ENTRY], capture_output=True)
     return "Hotkey removed."
+
+
+def status() -> str | None:
+    """The installed key binding (e.g. "<Super>j"), or None if the shortcut isn't installed."""
+    if not shutil.which("gsettings"):
+        return None
+    try:
+        if PATH not in _bindings():
+            return None
+        return _gsettings("get", ENTRY, "binding").strip("'\"") or None
+    except subprocess.CalledProcessError:
+        return None

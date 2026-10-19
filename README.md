@@ -29,19 +29,26 @@ Ask questions, get live answers from the web, and let it act on your computer.
 |---|---|
 | 💬 **Chat** | Streaming answers with full Markdown, syntax-highlighted code (one-click copy), live tool-progress chips, and light/dark themes that follow your GNOME setting. |
 | 🌐 **Live web search** | Current news, prices, scores, anything recent (DuckDuckGo, no key needed). |
+| 📎 **Attachments** | Click 📎, paste a screenshot (Ctrl+V) or drop files: images are read by a vision model (qwen3.8-27b on Groq), documents (PDF, Word, text, code) are extracted, so "here's my gym schedule, add it to my tasks" just works. |
+| 🔬 **Research** | "Compare X vs Y", "is it worth…": plans searches, reads several pages and answers with inline citations and a source list. |
+| 📚 **Your documents** | Add folders in Settings (notes, lecture PDFs, Markdown); ask "according to my notes…" and get answers citing the file and page. Indexed locally, incrementally. |
 | 📄 **Read pages & PDFs** | "Summarize this article: <url>" — fetches the page or PDF and reads it. |
 | 🌦️ **Weather** | Current conditions and today's forecast for any city (no key needed). |
 | 🖥️ **Apps & websites** | Open or close desktop apps, open websites. |
 | 🎵 **YouTube** | "play believer" finds the track and opens it. |
 | 🔊 **Volume** | Mute, unmute, up, down. |
-| 📝 **Writing** | Emails, letters, essays, code: written, saved and opened in your editor. |
+| 📝 **Writing** | Emails, letters, essays, code: written, saved where you say ("in Downloads", "in a new folder on my Desktop"; missing folders are created, never outside your home folder, never overwriting) and opened. "Open that folder" opens it in your file manager. |
 | 📋 **Clipboard** | "Translate what I copied", "copy that email to my clipboard". |
 | 📁 **Files** | Find, list and read files and PDFs in your home folder ("summarize ~/Downloads/report.pdf"). Access outside your home folder is refused. |
+| 🗂️ **Chat history** | Every conversation is kept. A sidebar (Ctrl+B) lists them by day; reopen, rename, delete, or search across all chats. |
+| ✅ **Tasks & notes** | "Add buy charger to my list", "submit the assignment Friday at 5" (also sets a reminder), "done with the charger". Quick notes: "note: café wifi is …", "what was the café wifi?". A panel (✓ in the header) with due dates, an overdue badge and search. |
 | ⏰ **Reminders** | "Remind me in 20 minutes to stretch", "remind me tomorrow at 9:00 to call mum". Desktop notification when due; list and cancel them too. |
+| ⚙️ **Settings** | Change your name, theme, model, reply length, API keys (checked before saving), check-ins, start-at-login and the shortcut from a panel: no file editing. |
+| 💬 **Gentle check-ins** | At most once a day, when you open AURA, a short question about something specific it knows ("How did the networks exam go?"). Most days there's nothing, so nothing appears. Off switch in Settings. |
 | ⌨️ **Global hotkey** | Super+J shows/hides AURA from anywhere (starts it if it isn't running). |
 | 🟢 **Always on** | Starts hidden at login; closing the window keeps it running in the background (Ctrl+Q quits). |
 | ⚡ **Never stalls** | When a model hits Groq's rate limit, AURA switches to another model instantly; if all are busy it shows a countdown. Stop any reply with Esc or the stop button. |
-| 🖼️ **Images** | Text-to-image via Hugging Face (optional key). |
+| 🖼️ **Images** | Generated images appear right in the chat (click to enlarge; copy, show in folder, open) and stay in your chat history. Uses Hugging Face FLUX when your account has credits, otherwise a free service (lower quality, small watermark). |
 | 🧠 **Memory** | Remembers you across chats: facts (where you study, people you mention, preferences, upcoming events) and a short note per day. Learns in the background after you chat, or when you say "remember…" / "forget…". A Memory panel (✦ in the header) lets you see, edit and delete everything, or turn learning off. Stored only on your computer. |
 
 You don't use commands; just say what you want. The agent decides which tools to use, and can chain several in one request ("open firefox and tell me today's top tech story").
@@ -104,10 +111,12 @@ sudo apt install pulseaudio-utils xdg-utils libnotify-bin
 `pactl` (from `pulseaudio-utils`, works with PipeWire too) handles volume; `xdg-open` opens saved documents and images; `notify-send` (from `libnotify-bin`) shows reminder notifications.
 "Open <app>" launches the matching executable on your `PATH`; "close <app>" uses `pkill`.
 
-> **Free tier note:** Groq's free tier allows 8,000 tokens per minute, and it counts each reply's
-> `max_tokens` allowance against that. AURA keeps requests small (old tool results are cleared,
-> history is summarized, replies capped at `MaxTokens=1024`), and if you send several tool-heavy
-> messages within a minute it waits and retries automatically. On a paid tier, raise `MaxTokens` in `.env`.
+> **Free tier note:** Groq's free tier gives each model 8,000 tokens per minute (and counts each reply's
+> `max_tokens` against it). AURA keeps requests small (history summarized past ~2k tokens, old tool results
+> cleared, only relevant tools sent), sends small talk to the small model, waits a few seconds rather than
+> answering with a weaker model when the big one is about to free up, and otherwise falls back across models.
+> For more headroom, add a free **Cerebras** key in Settings → AI: it hosts the same gpt-oss-120b with its own
+> budget and is tried right after Groq.
 
 ---
 
@@ -117,21 +126,32 @@ sudo apt install pulseaudio-utils xdg-utils libnotify-bin
 main.py
 aura/
 ├── config.py   # settings from .env
-├── tools.py      # 20 LangChain tools: web_search, read_url, read_file, set_reminder, ...
+├── tools.py      # 15 LangChain tools: web_search, files, tasks, notes, memory, reminders, ...
 ├── agent.py      # LangGraph agent (create_agent) + SQLite memory + middleware
 ├── reminders.py  # reminder storage (SQLite)
 ├── hotkey.py     # GNOME shortcut installer
 ├── desktop.py    # autostart + app menu entries
 ├── memory.py     # long-term memory (LangGraph SqliteStore): facts + daily notes
 ├── learner.py    # background memory agent that extracts facts from conversations
+├── lists.py      # tasks (linked to reminders) and notes
+├── threads.py    # chat history index + search for the sidebar
+├── embeddings.py # local embeddings (fastembed, bge-small) for meaning-based search
+├── documents.py  # folder indexing + search (LangGraph SqliteStore with a sqlite-vec index)
+├── research.py   # research agent: LangGraph plan → search → read → write
+├── models.py     # chat models across providers (Groq, Cerebras) + provider-neutral error handling
+├── attachments.py # attached images (vision model) and documents (text extraction)
+├── settings.py   # Settings panel backend: validate, save to .env, reload
+├── checkins.py   # gentle once-a-day check-ins
 ├── ui.py         # Qt window hosting the web UI; agent on a worker thread; single-instance + reminders
 └── web/          # the chat UI: index.html, app.css, app.js + vendored marked, DOMPurify, highlight.js, Inter
 Data/             # memory, reminders, saved documents and images (git-ignored)
 ```
 
 - **Agent**: `langchain.agents.create_agent` builds a LangGraph ReAct loop around `ChatGroq`. The model reads each tool's docstring and decides what to call.
+- **Token budget**: related actions are merged into 15 tools (e.g. `tasks(action=...)`), and a middleware sends only the tools a message needs (keyword groups plus anything used in the last couple of turns), so a typical request is ~700 input tokens instead of ~2,300.
 - **Middleware**: a dynamic system prompt (injects the current date/time), `SummarizationMiddleware` (compresses old history past ~4k tokens), `ContextEditingMiddleware` (sends old tool results as `[cleared]`), `ToolErrorMiddleware` (failed tools are reported to the model instead of crashing), and `ModelCallLimitMiddleware` (caps runaway tool loops).
 - **Conversation memory**: `SqliteSaver` checkpointer in `Data/memory.sqlite`. "New chat" starts a new thread; old ones stay saved.
+- **Meaning-based search**: a local embedding model (fastembed, `bge-small-en`, ~65 MB, downloaded once) powers memory recall ("when's my test?" finds the exam) and documents. Nothing is sent anywhere; without the model it falls back to keywords.
 - **Long-term memory**: a LangGraph `SqliteStore` (`Data/memory_store.sqlite`) holds facts and daily notes, injected into the system prompt each turn (older days via the `recall` tool). After ~45s of quiet, a background agent on the small model reads new messages and returns structured add / update / delete operations; it skips one-off requests, secrets and sensitive topics, and converts relative dates to absolute ones.
 - **Rate limits**: a custom middleware tries `ChatModel`, then each of `FallbackModels` (every Groq model has its own tokens-per-minute budget), and only waits when all are limited, streaming the countdown to the UI. Stop is cancellable at any point, and the saved history is repaired so a cancelled tool call never breaks the next request.
 - **Streaming**: `graph.stream(..., stream_mode=["messages", "updates"])` yields tokens and tool calls, which the Qt side forwards to the page over `QWebChannel`.
@@ -140,6 +160,13 @@ Data/             # memory, reminders, saved documents and images (git-ignored)
 Adding a tool is one decorated function in `aura/tools.py` plus an entry in `TOOLS`.
 
 ---
+
+## 🧪 Tests
+
+```bash
+pytest            # ~50 offline tests in a few seconds: no API calls, isolated data, nothing opens
+pytest --live -s  # also a 17-step everyday conversation against Groq (uses your quota)
+```
 
 ## 🤝 Contributing
 
