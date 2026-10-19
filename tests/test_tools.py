@@ -93,3 +93,15 @@ def test_generated_image_guard(isolated):
     (images / "fox.jpg").write_bytes(b"jpg")
     assert ui._generated_image(str(images / "fox.jpg"))
     assert ui._generated_image("/etc/passwd") is None
+
+
+def test_tasks_tool_adds_a_whole_schedule_in_one_call():
+    # Regression: adding a 3-day gym schedule one call at a time, the model made two calls but claimed three.
+    out = tools.tasks.invoke({"action": "add", "items": [
+        {"task": "Gym: Chest + Triceps", "due": "2030-01-07 19:00"},
+        {"task": "Gym: Back + Biceps", "due": "2030-01-09 19:00"},
+        {"task": "Gym: Legs", "due": "2030-01-11 18:30"},
+        {"task": "Broken", "due": "next friday"}]})
+    from aura import lists
+    assert [t["text"] for t in lists.tasks()] == ["Gym: Chest + Triceps", "Gym: Back + Biceps", "Gym: Legs"]
+    assert out.count("Added task") == 3 and "Not added (Broken)" in out

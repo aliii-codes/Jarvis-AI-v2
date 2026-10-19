@@ -219,7 +219,7 @@ main::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
 .dock { flex-shrink: 0; padding: 4px 0 14px; background: linear-gradient(to bottom, transparent, var(--bg) 30%); }
 
 .composer {
-  display: flex; align-items: flex-end; gap: 8px; padding: 8px 8px 8px 18px;
+  display: flex; flex-direction: column; gap: 6px; padding: 8px 8px 8px 8px;
   border: 1px solid var(--border); border-radius: 22px; background: var(--surface);
   box-shadow: var(--shadow); transition: border-color .15s;
 }
@@ -504,3 +504,37 @@ kbd { font-family: inherit; font-size: 11px; padding: 0 4px; border: 1px solid v
 
 .doc-actions { display: flex; gap: 8px; margin: 8px 0 6px; }
 #doc-folders li .text { cursor: default; font-family: "Fira Code", ui-monospace, monospace; font-size: 12.5px; }
+
+/* ── attachments ─────────────────────────────────────────── */
+.composer-row { display: flex; align-items: flex-end; gap: 6px; }
+.attach-btn {
+  display: grid; place-items: center; width: 36px; height: 36px; flex-shrink: 0; border: none; border-radius: 50%;
+  background: transparent; color: var(--muted); cursor: pointer; transition: all .15s;
+}
+.attach-btn:hover { background: var(--surface-2); color: var(--text); }
+.tray { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 6px 0; }
+.tray[hidden] { display: none; }
+.att-chip {
+  position: relative; display: flex; align-items: center; gap: 8px; max-width: 220px; height: 52px; padding: 4px 10px 4px 4px;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--bg); font-size: 12.5px;
+}
+.att-chip img { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; }
+.att-chip .doc-icon { width: 44px; height: 44px; border-radius: 8px; display: grid; place-items: center;
+                      background: var(--surface-2); color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.att-chip .att-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
+.att-chip .att-remove {
+  position: absolute; top: -7px; right: -7px; width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--border);
+  background: var(--surface); color: var(--muted); display: grid; place-items: center; cursor: pointer; padding: 0;
+}
+.att-chip .att-remove:hover { color: var(--danger); }
+
+.msg.user { flex-direction: column; align-items: flex-end; gap: 6px; }
+.user-files { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: 78%; }
+.user-files img { max-width: 220px; max-height: 220px; border-radius: 14px; border: 1px solid var(--border); cursor: zoom-in; display: block; }
+.user-files .att-chip { cursor: pointer; background: var(--surface); }
+
+.dropzone { position: fixed; inset: 0; z-index: 25; display: grid; place-items: center; background: rgba(10, 10, 14, .55);
+            pointer-events: none; }
+.dropzone[hidden] { display: none; }
+.dropzone div { padding: 22px 30px; border: 2px dashed var(--accent); border-radius: 18px; background: var(--bg);
+                color: var(--text); font-weight: 600; }

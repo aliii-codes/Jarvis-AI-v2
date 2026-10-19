@@ -5,7 +5,7 @@ import sqlite3
 import threading
 from pathlib import Path
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Iterator, Literal
 
 import groq
@@ -25,10 +25,12 @@ from langchain_groq import ChatGroq
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.config import get_stream_writer
 
+from . import attachments as attachment_files
 from . import config, documents, lists, memory, threads
 from .tools import TOOLS
 
 SYSTEM_PROMPT = """You are {assistant}, {user}'s desktop assistant. Now: {now}.
+Next 7 days: {week} (use these exact dates; don't compute weekdays yourself).
 - Be concise. Light Markdown only (no tables or headings). Never show internal ids like #a1b2c3.
 - Act through tools, and only claim what a tool actually did in this reply; never promise to do things later.
   If a tool fails, say so. Never invent live facts: use web_search (one search is usually enough).
@@ -80,10 +82,13 @@ def _is_summary(msg: BaseMessage) -> bool:
 
 @dynamic_prompt
 def _system_prompt(request: ModelRequest) -> str:
+    today = datetime.now()
     prompt = SYSTEM_PROMPT.format(
         assistant=config.ASSISTANT_NAME,
         user=config.USERNAME,
-        now=datetime.now().strftime("%A %d %B %Y, %H:%M"),
+        now=today.strftime("%A %d %B %Y, %H:%M"),
+        # Models get weekday -> date arithmetic wrong (a "Mon" gym session was saved on Wednesday): spell it out.
+        week=", ".join((today + timedelta(days=i)).strftime("%a %Y-%m-%d") for i in range(7)),
     )
     sections = [prompt, memory.prompt_block()]
     urgent = lists.attention()
@@ -292,13 +297,24 @@ class Aura:
     def stop(self) -> None:
         self.cancelled.set()
 
-    def stream(self, text: str) -> Iterator[Event]:
-        """Run one user turn, yielding answer tokens, tool calls and status updates as they happen."""
+    def stream(self, text: str, attachments: list[dict] | None = None) -> Iterator[Event]:
+        """Run one user turn, yielding answer tokens, tool calls and status updates as they happen.
+        `attachments` (from attachments.add_file / add_bytes) are read into text before the model sees them."""
         self.cancelled.clear()
         self._repair()
+        message = HumanMessage(text)
+        if attachments:
+            parts = []
+            for meta in attachments:
+                yield Event("status", f"reading {meta['name']}")
+                parts.append(attachment_files.to_text(meta))
+            content = "\n\n".join(([text] if text.strip() else []) + parts)
+            message = HumanMessage(content, additional_kwargs={
+                "display_text": text,  # what the chat shows; the model also gets the extracted text
+                "attachments": [{k: m[k] for k in ("id", "name", "kind", "path")} for m in attachments]})
         had_text = after_tool = used_tool = False
         partial: list[str] = []
-        stream = self.graph.stream({"messages": [HumanMessage(text)]}, self.config,
+        stream = self.graph.stream({"messages": [message]}, self.config,
                                    stream_mode=["messages", "updates", "custom"])
         try:
             for mode, payload in stream:
@@ -370,7 +386,9 @@ class Aura:
         out = []
         for msg in self.graph.get_state(self.config).values.get("messages", []):
             if isinstance(msg, HumanMessage) and not _is_summary(msg):
-                out.append(("user", msg.content))
+                files = msg.additional_kwargs.get("attachments")
+                text = msg.additional_kwargs.get("display_text", msg.content)
+                out.append(("user", text, files) if files else ("user", text))
             elif isinstance(msg, AIMessage) and msg.content:
                 role = "checkin" if msg.additional_kwargs.get("aura_checkin") else "assistant"
                 out.append((role, _plain(msg.content)))

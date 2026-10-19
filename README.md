@@ -29,6 +29,7 @@ Ask questions, get live answers from the web, and let it act on your computer.
 |---|---|
 | 💬 **Chat** | Streaming answers with full Markdown, syntax-highlighted code (one-click copy), live tool-progress chips, and light/dark themes that follow your GNOME setting. |
 | 🌐 **Live web search** | Current news, prices, scores, anything recent (DuckDuckGo, no key needed). |
+| 📎 **Attachments** | Click 📎, paste a screenshot (Ctrl+V) or drop files: images are read by a vision model (qwen3.8-27b on Groq), documents (PDF, Word, text, code) are extracted, so "here's my gym schedule, add it to my tasks" just works. |
 | 🔬 **Research** | "Compare X vs Y", "is it worth…": plans searches, reads several pages and answers with inline citations and a source list. |
 | 📚 **Your documents** | Add folders in Settings (notes, lecture PDFs, Markdown); ask "according to my notes…" and get answers citing the file and page. Indexed locally, incrementally. |
 | 📄 **Read pages & PDFs** | "Summarize this article: <url>" — fetches the page or PDF and reads it. |
@@ -135,6 +136,7 @@ aura/
 ├── embeddings.py # local embeddings (fastembed, bge-small) for meaning-based search
 ├── documents.py  # folder indexing + search (LangGraph SqliteStore with a sqlite-vec index)
 ├── research.py   # research agent: LangGraph plan → search → read → write
+├── attachments.py # attached images (vision model) and documents (text extraction)
 ├── settings.py   # Settings panel backend: validate, save to .env, reload
 ├── checkins.py   # gentle once-a-day check-ins
 ├── ui.py         # Qt window hosting the web UI; agent on a worker thread; single-instance + reminders

@@ -78,15 +78,87 @@ function showWelcome() {
   welcome.hidden = false;
 }
 
-function addUser(text) {
+function fileChip(f, onRemove) {
+  const chip = el("div", "att-chip");
+  if (f.kind === "image") {
+    const img = el("img"); img.src = f.url; img.alt = f.name; chip.appendChild(img);
+  } else {
+    const ext = (f.name.split(".").pop() || "doc").slice(0, 4);
+    const icon = el("span", "doc-icon"); icon.textContent = ext; chip.appendChild(icon);
+  }
+  const name = el("span", "att-name"); name.textContent = f.name; name.title = f.name;
+  chip.appendChild(name);
+  if (onRemove) {
+    const x = el("button", "att-remove", '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>');
+    x.type = "button"; x.title = "Remove"; x.addEventListener("click", onRemove);
+    chip.appendChild(x);
+  }
+  return chip;
+}
+
+function addUser(text, files) {
   hideWelcome();
   const row = el("div", "msg user");
-  const bubble = el("div", "bubble");
-  bubble.textContent = text;
-  row.appendChild(bubble);
+  if (files && files.length) {
+    const box = el("div", "user-files");
+    files.forEach((f) => {
+      if (f.kind === "image") {
+        const img = el("img"); img.src = f.url; img.alt = f.name; img.title = f.name;
+        img.addEventListener("click", () => openLightbox(f.url));
+        img.addEventListener("load", () => follow());
+        box.appendChild(img);
+      } else {
+        const chip = fileChip(f);
+        chip.title = "Open " + f.name;
+        chip.addEventListener("click", () => bridge && bridge.openAttachment(f.id));
+        box.appendChild(chip);
+      }
+    });
+    row.appendChild(box);
+  }
+  if (text && text.trim()) {
+    const bubble = el("div", "bubble");
+    bubble.textContent = text;
+    row.appendChild(bubble);
+  }
   thread.appendChild(row);
   follow(true);
 }
+
+// ── attaching files: 📎 button, pasted screenshots, dropped files ──
+let pending = [];
+const tray = $("#tray");
+
+function renderTray() {
+  tray.innerHTML = "";
+  pending.forEach((f, i) => tray.appendChild(fileChip(f, () => { pending.splice(i, 1); renderTray(); updateSend(); })));
+  tray.hidden = !pending.length;
+}
+
+function attachBlob(file, fallbackName) {
+  if (file.size > 25 * 1024 * 1024) { addNote(`${file.name || fallbackName} is too large (max 25 MB).`, null, "error"); return; }
+  const reader = new FileReader();
+  reader.onload = () => bridge && bridge.attachData(file.name || fallbackName, String(reader.result).split(",")[1] || "");
+  reader.readAsDataURL(file);
+}
+
+$("#attach").addEventListener("click", () => bridge && bridge.pickAttachments());
+input.addEventListener("paste", (e) => {
+  const files = [...(e.clipboardData ? e.clipboardData.items : [])].filter((it) => it.kind === "file").map((it) => it.getAsFile());
+  if (!files.length) return;  // plain text paste
+  e.preventDefault();
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  files.forEach((f, i) => attachBlob(f, `screenshot-${stamp}${i ? "-" + i : ""}.png`));
+});
+const dropzone = $("#dropzone");
+let dragDepth = 0;
+document.addEventListener("dragenter", (e) => { if ([...e.dataTransfer.types].includes("Files")) { dragDepth++; dropzone.hidden = false; } });
+document.addEventListener("dragleave", () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) dropzone.hidden = true; });
+document.addEventListener("dragover", (e) => e.preventDefault());
+document.addEventListener("drop", (e) => {
+  e.preventDefault(); dragDepth = 0; dropzone.hidden = true;
+  [...e.dataTransfer.files].forEach((f) => attachBlob(f, f.name));
+});
 
 function addAssistant(text) {
   const row = el("div", "msg assistant");
@@ -325,7 +397,7 @@ function setBusy(value) {
   if (!value) { setStatus("ready", false); input.focus(); }
 }
 
-function updateSend() { sendBtn.disabled = !busy && !input.value.trim(); }
+function updateSend() { sendBtn.disabled = !busy && !input.value.trim() && !pending.length; }
 
 function stop() {
   if (!busy || !bridge) return;
@@ -340,14 +412,16 @@ function autosize() {
 
 function send(text) {
   text = (text || "").trim();
-  if (!text || busy || !bridge) return;
-  addUser(text);
+  if ((!text && !pending.length) || busy || !bridge) return;
+  const files = pending;
+  pending = []; renderTray();
+  addUser(text, files);
   input.value = "";
   autosize();
   setBusy(true);
   setStatus("thinking…", true);
   startTurn();
-  bridge.send(text);
+  bridge.send(text, JSON.stringify(files.map((f) => f.id)));
 }
 
 $("#composer").addEventListener("submit", (e) => { e.preventDefault(); busy ? stop() : send(input.value); });
@@ -842,7 +916,7 @@ new QWebChannel(qt.webChannelTransport, (channel) => {
     const items = JSON.parse(json);
     thread.innerHTML = "";
     items.forEach(([role, text, path]) =>
-      role === "user" ? addUser(text) : role === "image" ? addImageRow(text, path)
+      role === "user" ? addUser(text, path) : role === "image" ? addImageRow(text, path)
         : role === "checkin" ? addCheckin(text) : addAssistant(text));
     if (!items.length) showWelcome(); else hideWelcome();
     follow(true);
@@ -863,6 +937,8 @@ new QWebChannel(qt.webChannelTransport, (channel) => {
   bridge.settings.connect((json) => renderSettings(JSON.parse(json)));
   bridge.settingResult.connect(onSettingResult);
   bridge.checkin.connect(addCheckin);
+  bridge.attached.connect((json) => { pending = pending.concat(JSON.parse(json)); renderTray(); updateSend(); input.focus(); });
+  bridge.attachError.connect((msg) => addNote(msg, null, "error"));
   bridge.searchResults.connect((json) => { if (searching) renderSearch(JSON.parse(json)); });
   bridge.memorySaved.connect((json) => showToast(JSON.parse(json)));
 

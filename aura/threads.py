@@ -26,7 +26,12 @@ def _messages(graph, thread_id: str) -> list:
 
 def _title_from(messages: list) -> str:
     # Skip openers like "hey" / "hi": use the first message with some substance, else the first one.
-    texts = [" ".join(str(m.content).split()) for m in messages if isinstance(m, HumanMessage) and not _is_summary(m)]
+    def shown(m) -> str:  # what the user typed (not extracted attachment text), or the attachment's name
+        files = m.additional_kwargs.get("attachments") or []
+        typed = m.additional_kwargs.get("display_text", m.content) if files else m.content
+        return " ".join(str(typed).split()) or ("📎 " + files[0]["name"] if files else "")
+
+    texts = [shown(m) for m in messages if isinstance(m, HumanMessage) and not _is_summary(m)]
     first = next((t for t in texts if len(t.split()) >= 3), texts[0] if texts else "")
     return (first[:57] + "…") if len(first) > 58 else first
 

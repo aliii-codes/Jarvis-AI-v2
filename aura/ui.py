@@ -1,4 +1,5 @@
 """Desktop window: a local web page (aura/web) rendered by QtWebEngine, driven over QWebChannel."""
+import base64
 import json
 import time
 from pathlib import Path
@@ -14,7 +15,7 @@ from PyQt5.QtWebChannel import QWebChannel
 from PyQt5.QtWebEngineWidgets import QWebEnginePage, QWebEngineView
 from PyQt5.QtWidgets import QApplication, QFileDialog, QMainWindow, QShortcut
 
-from . import checkins, config, documents, embeddings, instance, learner, lists, memory, reminders, settings, threads, tools
+from . import attachments, checkins, config, documents, embeddings, instance, learner, lists, memory, reminders, settings, threads, tools
 from .agent import Aura
 
 WEB_DIR = config.ROOT / "aura" / "web"
@@ -26,11 +27,21 @@ def _file_url(path: str) -> str:
     return QUrl.fromLocalFile(path).toString()
 
 
+def _attachment_view(meta: dict) -> dict:
+    return {"id": meta["id"], "name": meta["name"], "kind": meta["kind"], "url": _file_url(meta["path"])}
+
+
 def _history_json(aura: Aura | None) -> str:
-    """History for the page; images become [role, url, path]."""
+    """History for the page; images become [role, url, path], user messages may carry attachments."""
     rows = []
-    for role, text in (aura.history() if aura else []):
-        rows.append(["image", _file_url(text), text] if role == "image" else [role, text])
+    for row in (aura.history() if aura else []):
+        role, text = row[0], row[1]
+        if role == "image":
+            rows.append(["image", _file_url(text), text])
+        elif role == "user" and len(row) > 2:
+            rows.append(["user", text, [_attachment_view(m) for m in row[2] if Path(m["path"]).exists()]])
+        else:
+            rows.append([role, text])
     return json.dumps(rows)
 
 
@@ -104,14 +115,14 @@ class Worker(QThread):
     status = pyqtSignal(str)
     failed = pyqtSignal(str)
 
-    def __init__(self, aura: Aura, text: str):
+    def __init__(self, aura: Aura, text: str, files: list[dict] | None = None):
         super().__init__()
-        self.aura, self.text = aura, text
+        self.aura, self.text, self.files = aura, text, files or []
         self.stopped = False
 
     def run(self):
         try:
-            for event in self.aura.stream(self.text):
+            for event in self.aura.stream(self.text, self.files):
                 if event.kind == "token":
                     self.token.emit(event.text)
                 elif event.kind == "tool":
@@ -206,9 +217,37 @@ class WebBridge(QObject):
     def ready(self):
         self.window.page_ready()
 
+    attached = pyqtSignal(str)       # attachments ready to show in the composer
+    attachError = pyqtSignal(str)
+
+    @pyqtSlot(str, str)
+    def send(self, text: str, attachment_ids_json: str):
+        # Only ids of files already copied into Data/attachments are accepted from the page.
+        files = [m for m in (attachments.get(i) for i in json.loads(attachment_ids_json or "[]")) if m]
+        self.window.send(text, files)
+
+    @pyqtSlot()
+    def pickAttachments(self):
+        paths, _ = QFileDialog.getOpenFileNames(
+            self.window, "Attach images or documents", str(Path.home()),
+            "Images and documents (*.png *.jpg *.jpeg *.webp *.gif *.bmp *.pdf *.docx *.txt *.md *.csv *.json *.py);;All files (*)")
+        self._attach(lambda: [attachments.add_file(p) for p in paths])
+
+    @pyqtSlot(str, str)
+    def attachData(self, name: str, b64: str):
+        """A pasted screenshot or a file dropped onto the window."""
+        self._attach(lambda: [attachments.add_bytes(name, base64.b64decode(b64))])
+
+    def _attach(self, fn):
+        try:
+            self.attached.emit(json.dumps([_attachment_view(m) for m in fn()]))
+        except (ValueError, OSError) as e:
+            self.attachError.emit(str(e))
+
     @pyqtSlot(str)
-    def send(self, text: str):
-        self.window.send(text)
+    def openAttachment(self, attachment_id: str):
+        if meta := attachments.get(attachment_id):
+            tools.open_path(meta["path"])
 
     @pyqtSlot()
     def stop(self):
@@ -523,10 +562,10 @@ class ChatWindow(QMainWindow):
             self.web.note.emit(*note)
         self.pending_notes.clear()
 
-    def send(self, text: str):
+    def send(self, text: str, files: list[dict] | None = None):
         if not self.aura or self.worker:
             return
-        self.worker = Worker(self.aura, text)
+        self.worker = Worker(self.aura, text, files)
         self.worker.token.connect(self.web.token)
         self.worker.tool.connect(lambda name: self.web.tool.emit(name, *TOOL_LABELS.get(name, (name, name))))
         self.worker.status.connect(self.web.status)

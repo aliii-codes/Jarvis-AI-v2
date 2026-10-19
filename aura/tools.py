@@ -10,7 +10,7 @@ import subprocess
 import webbrowser
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, NotRequired, TypedDict
 from urllib.parse import quote_plus
 
 import requests
@@ -581,11 +581,25 @@ def memory(action: Literal["remember", "forget", "recall"], text: str, replaces:
     return _recall(text)
 
 
+class TaskItem(TypedDict):
+    task: str
+    due: NotRequired[str]
+
+
 @tool
 def tasks(action: Literal["add", "list", "done", "delete"], task: str = "", due: str = "",
-          include_done: bool = False) -> str:
+          include_done: bool = False, items: list[TaskItem] | None = None) -> str:
     """The user's to-do list. add: `task` text, optional `due` "YYYY-MM-DD" or "YYYY-MM-DD HH:MM" (a time also
-    sets a reminder). list: open tasks. done / delete: `task` is a few words from the task."""
+    sets a reminder); to add several at once (e.g. a whole schedule), pass them all in `items` in ONE call.
+    list: open tasks. done / delete: `task` is a few words from the task."""
+    if action == "add" and items:
+        results = []
+        for item in items:
+            try:
+                results.append(_add_task(item["task"], item.get("due", "")))
+            except ValueError as e:
+                results.append(f"Not added ({item.get('task', '?')}): {e}")
+        return "\n".join(results)
     if action == "add":
         return _add_task(task, due)
     if action == "list":
