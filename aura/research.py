@@ -9,13 +9,12 @@ from datetime import datetime
 from typing import Callable, TypedDict
 from urllib.parse import urlparse
 
-import groq
 from ddgs import DDGS
-from langchain_groq import ChatGroq
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
 from . import config
+from . import models as model_lib
 
 MAX_SOURCES = 5
 PAGE_CHARS = 2200  # per source: 5 sources stay well inside the free tier's per-minute token budget
@@ -33,19 +32,19 @@ class State(TypedDict, total=False):
     answer: str
 
 
-def _llm(model: str, max_tokens: int) -> ChatGroq:
-    extra = {"reasoning_effort": "low"} if model.startswith("openai/gpt-oss") else {"reasoning_format": "hidden"}
-    return ChatGroq(model=model, api_key=config.GROQ_API_KEY, max_tokens=max_tokens, max_retries=2,
-                    request_timeout=60, **extra)
+def _llm(model: str, max_tokens: int):
+    return model_lib.chat_model(model, max_tokens=max_tokens, timeout=60, max_retries=2)
 
 
-def _with_fallback(call: Callable[[ChatGroq], object], max_tokens: int):
-    """Try each chat model in turn on rate limits (each has its own per-minute budget)."""
+def _with_fallback(call: Callable, max_tokens: int):
+    """Try each chat model (and provider) in turn on rate limits, outages or a bad key."""
     last = None
     for model in config.CHAT_MODELS:
         try:
             return call(_llm(model, max_tokens))
-        except groq.RateLimitError as e:
+        except Exception as e:
+            if model_lib.classify(e) is None:
+                raise
             last = e
     raise last
 

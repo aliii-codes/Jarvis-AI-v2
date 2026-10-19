@@ -636,7 +636,7 @@ settingsPanel.querySelectorAll(".segmented").forEach((seg) => seg.querySelectorA
 settingsPanel.querySelectorAll(".key-field").forEach((f) => f.addEventListener("submit", (e) => {
   e.preventDefault();
   const v = f.querySelector("input").value.trim();
-  if (!v && f.dataset.key === "groq_key") return;
+  if (!v && f.dataset.key === "groq_key") return;  // the Groq key can't be removed; others can (empty = remove)
   const status = f.querySelector(".key-status");
   status.className = "key-status"; status.textContent = "Checking…";
   f.querySelector("button").disabled = true;

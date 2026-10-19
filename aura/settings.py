@@ -40,6 +40,7 @@ def snapshot() -> dict:
         "models": available_models(),
         "reply_length": length,
         "groq_key": _mask(config.GROQ_API_KEY),
+        "cerebras_key": _mask(config.CEREBRAS_API_KEY),
         "hf_key": _mask(config.HF_API_KEY),
         "learning": memory.learning_enabled(),
         "followups": config.FOLLOWUPS,
@@ -95,6 +96,19 @@ def _apply(name: str, value) -> tuple[str, bool]:
             raise ValueError(f"Couldn't check the key ({type(e).__name__}). Are you online?")
         _write("GroqAPIKey", key)
         message, rebuild = "Groq key saved and working.", True
+    elif name == "cerebras_key":
+        key = str(value).strip()
+        if key:
+            import openai
+            from .models import CEREBRAS_URL
+            try:  # same check as the Groq key: a typo here would silently disable the backup
+                openai.OpenAI(base_url=CEREBRAS_URL, api_key=key, timeout=10, max_retries=1).models.list()
+            except openai.AuthenticationError:
+                raise ValueError("Cerebras rejected that key. Check it and try again.")
+            except openai.APIError as e:
+                raise ValueError(f"Couldn't check the key ({type(e).__name__}). Are you online?")
+        _write("CerebrasAPIKey", key)
+        message, rebuild = ("Cerebras key saved: the big model now has a backup." if key else "Cerebras key removed."), True
     elif name == "hf_key":
         _write("HuggingFaceAPIKey", str(value).strip())
         message = "Hugging Face key saved." if str(value).strip() else "Hugging Face key removed."

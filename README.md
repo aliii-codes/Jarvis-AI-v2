@@ -111,10 +111,12 @@ sudo apt install pulseaudio-utils xdg-utils libnotify-bin
 `pactl` (from `pulseaudio-utils`, works with PipeWire too) handles volume; `xdg-open` opens saved documents and images; `notify-send` (from `libnotify-bin`) shows reminder notifications.
 "Open <app>" launches the matching executable on your `PATH`; "close <app>" uses `pkill`.
 
-> **Free tier note:** Groq's free tier allows 8,000 tokens per minute, and it counts each reply's
-> `max_tokens` allowance against that. AURA keeps requests small (old tool results are cleared,
-> history is summarized, replies capped at `MaxTokens=1024`), and if you send several tool-heavy
-> messages within a minute it waits and retries automatically. On a paid tier, raise `MaxTokens` in `.env`.
+> **Free tier note:** Groq's free tier gives each model 8,000 tokens per minute (and counts each reply's
+> `max_tokens` against it). AURA keeps requests small (history summarized past ~2k tokens, old tool results
+> cleared, only relevant tools sent), sends small talk to the small model, waits a few seconds rather than
+> answering with a weaker model when the big one is about to free up, and otherwise falls back across models.
+> For more headroom, add a free **Cerebras** key in Settings → AI: it hosts the same gpt-oss-120b with its own
+> budget and is tried right after Groq.
 
 ---
 
@@ -136,6 +138,7 @@ aura/
 ├── embeddings.py # local embeddings (fastembed, bge-small) for meaning-based search
 ├── documents.py  # folder indexing + search (LangGraph SqliteStore with a sqlite-vec index)
 ├── research.py   # research agent: LangGraph plan → search → read → write
+├── models.py     # chat models across providers (Groq, Cerebras) + provider-neutral error handling
 ├── attachments.py # attached images (vision model) and documents (text extraction)
 ├── settings.py   # Settings panel backend: validate, save to .env, reload
 ├── checkins.py   # gentle once-a-day check-ins

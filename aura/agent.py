@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Iterator, Literal
 
-import groq
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
     ClearToolUsesEdit,
@@ -27,6 +26,7 @@ from langgraph.config import get_stream_writer
 
 from . import attachments as attachment_files
 from . import config, documents, lists, memory, threads
+from . import models as model_lib
 from .tools import TOOLS
 
 SYSTEM_PROMPT = """You are {assistant}, {user}'s desktop assistant. Now: {now}.
@@ -156,74 +156,74 @@ def _wrap_up(request: ModelRequest, handler):
     return handler(request)
 
 
-def _chat_model(name: str) -> ChatGroq:
-    # max_retries=0: on a 429 we switch models immediately instead of the client silently waiting.
-    extra = {"reasoning_effort": "low"} if name.startswith("openai/gpt-oss") else {"reasoning_format": "hidden"}
-    # request_timeout: a stalled connection fails after 30s (then falls back) instead of hanging silently.
-    return ChatGroq(model=name, api_key=config.GROQ_API_KEY, max_tokens=config.MAX_TOKENS, max_retries=0,
-                    request_timeout=30, **extra)
+SHORT_WAIT = 4.0  # if the best model frees up within this many seconds, wait for it rather than answer worse
+SMALL_TALK = re.compile(r"^\s*(hi|hey|hello|yo|sup|hiya|thanks|thank you|thx|ty|ok|okay|k|cool|nice|great|lol|haha|"
+                        r"good (morning|night|evening|afternoon)|bye|gn|how are you|what'?s up)\b[\s!.?]*$", re.I)
 
 
-def _retry_after(err: groq.RateLimitError) -> float:
-    header = err.response.headers.get("retry-after") if err.response is not None else None
-    if header:
-        try:
-            return float(header)
-        except ValueError:
-            pass
-    match = re.search(r"try again in ([\d.]+)s", str(err))
-    return float(match.group(1)) if match else 10.0
+def _small_talk(messages: list) -> bool:
+    """A greeting or thanks at the start of a turn: the small model answers that just as well,
+    which saves the big model's per-minute budget for real questions."""
+    if not messages or not isinstance(messages[-1], HumanMessage) or _is_summary(messages[-1]):
+        return False
+    text = str(messages[-1].content)
+    return len(text.split()) <= 6 and bool(SMALL_TALK.match(text))
 
 
-# Worth retrying: a network blip or a Groq-side hiccup. (With max_retries=0 the client no longer does this.)
-TRANSIENT = (groq.APIConnectionError, groq.APITimeoutError, groq.InternalServerError)
-
-
-def _bad_tool_call(err: Exception) -> bool:
-    """Groq rejects a reply that calls a tool that wasn't offered (e.g. a made-up "translate").
-    It's a model slip, not a real failure: asking again usually works."""
-    return isinstance(err, groq.APIError) and "tool call validation failed" in str(err).lower()
-
-
-def _rate_limit_fallback(models: list[ChatGroq], cancelled: threading.Event):
-    """Each Groq model has its own tokens-per-minute budget: on a 429, try the next model right away.
-    Only if every model is limited, wait (visibly, and cancellably) for the soonest one to free up.
-    Connection errors and 5xx get the same treatment with a short backoff."""
+def _rate_limit_fallback(models: list, cancelled: threading.Event):
+    """Every model (and provider) has its own tokens-per-minute budget. On a 429: wait briefly if the best
+    model frees up within seconds, otherwise try the next model right away; only if all are limited, wait
+    (visibly, cancellably) for the soonest. Connection errors and 5xx get a short backoff, a model that calls
+    a tool it wasn't offered gets one more try, and a provider with a bad key is skipped."""
 
     @wrap_model_call
     def fallback(request: ModelRequest, handler):
         status = get_stream_writer()
+        order = list(models)
+        if _small_talk(request.state["messages"]):
+            small = [m for m in order if getattr(m, "model_name", "") == config.SUMMARY_MODEL]
+            order = small + [m for m in order if m not in small]
         for attempt in range(4):
             waits, limited = [], False
-            for i, model in enumerate(models):
+            for i, model in enumerate(order):
                 if cancelled.is_set():
                     raise Cancelled()
-                try:
-                    if i:
-                        status({"status": f"busy · using {model.model_name.split('/')[-1]}"})
+                if i:
+                    status({"status": f"busy · using {model_lib.label(model)}"})
+                retried = False
+                while True:
                     try:
                         return handler(request.override(model=model))
-                    except groq.APIError as err:
-                        if not _bad_tool_call(err):
-                            raise
-                        return handler(request.override(model=model))  # one more try; a second slip falls through
-                except groq.RateLimitError as err:
-                    limited = True
-                    waits.append(_retry_after(err))
-                except TRANSIENT:
-                    waits.append(2.0 * (attempt + 1))  # short backoff: 2s, 4s, 6s...
-                except groq.APIError as err:
-                    if not _bad_tool_call(err):
+                    except Cancelled:
                         raise
-                    continue  # this model keeps inventing tools: try the next one
-            if not waits:  # every model failed with a bad tool call: one last try raises the real error
+                    except Exception as err:
+                        kind = model_lib.classify(err)
+                        if kind is None:
+                            raise
+                        if kind == "bad_tool" and not retried:  # a model slip: asking again usually works
+                            retried = True
+                            continue
+                        wait = model_lib.retry_after(err) if kind == "rate" else 0
+                        if kind == "rate" and i == 0 and attempt == 0 and not retried and wait <= SHORT_WAIT:
+                            retried = True
+                            status({"status": f"busy · back in {wait:.0f}s"})
+                            if cancelled.wait(wait + 0.3):
+                                raise Cancelled()
+                            continue
+                        if kind == "rate":
+                            limited = True
+                            waits.append(wait)
+                        elif kind == "offline":
+                            waits.append(2.0 * (attempt + 1))  # short backoff: 2s, 4s, 6s...
+                        break  # rate / offline / skip / repeated bad tool call: next model
+            if not waits:  # nothing to wait for (bad keys, tool slips): one last try raises the real error
                 break
             wait = min(waits) + 0.5
             reason = "rate limited" if limited else "connection problem"
             status({"status": f"{reason} · retrying in {wait:.0f}s"})
             if cancelled.wait(wait):
                 raise Cancelled()
-        return handler(request.override(model=models[0]))
+        return handler(request.override(model=order[0]))
 
     return fallback
 
@@ -244,7 +244,7 @@ class Aura:
         self._conn = sqlite3.connect(config.MEMORY_DB, check_same_thread=False)
         self.checkpointer = SqliteSaver(self._conn)
 
-        models = [_chat_model(name) for name in config.CHAT_MODELS]
+        models = [model_lib.chat_model(name) for name in config.CHAT_MODELS]
         summarizer = ChatGroq(model=config.SUMMARY_MODEL, api_key=config.GROQ_API_KEY,
                               reasoning_effort="low", max_tokens=1024, max_retries=6, request_timeout=60)
         self.graph = create_agent(
@@ -252,11 +252,12 @@ class Aura:
             tools=TOOLS,
             middleware=[
                 _system_prompt,
-                # Keeps memory bounded: once history passes ~4k tokens, older turns become a summary.
-                SummarizationMiddleware(summarizer, trigger=("tokens", 4000), keep=("messages", 12)),
+                # Keeps requests small: past ~2k tokens of history, older turns become a summary. History was
+                # most of each request, so this roughly doubles how often the big model fits in the free budget.
+                SummarizationMiddleware(summarizer, trigger=("tokens", 2000), keep=("messages", 6)),
                 # Old tool results (web pages, files, saved documents) are already answered; send them as
                 # "[cleared]" so they don't eat Groq's tokens-per-minute budget on every later request.
-                ContextEditingMiddleware(edits=[ClearToolUsesEdit(trigger=2500, keep=1, clear_tool_inputs=True)]),
+                ContextEditingMiddleware(edits=[ClearToolUsesEdit(trigger=1500, keep=1, clear_tool_inputs=True)]),
                 # A failing tool (network down, app missing...) is reported to the model instead of crashing the turn.
                 ToolErrorMiddleware(on_error=lambda e, req: f"Error: {type(e).__name__}: {e}"),
                 _select_tools,

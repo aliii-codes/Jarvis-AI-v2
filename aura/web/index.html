@@ -190,6 +190,13 @@
         <small class="key-status"></small>
       </form>
 
+      <form class="field key-field" data-key="cerebras_key"><span>Cerebras API key <em>(optional, free)</em></span>
+        <div class="key-row"><input type="password" placeholder="csk-…" autocomplete="off"><button type="submit">Save</button></div>
+        <small class="key-status"></small>
+      </form>
+      <p class="field-hint">Cerebras runs the same model with its own free budget, so when Groq's runs out you still get
+        the big model instead of a smaller backup. Free key at cloud.cerebras.ai.</p>
+
       <h3>Images</h3>
       <form class="field key-field" data-key="hf_key"><span>Hugging Face key <em>(optional, better images)</em></span>
         <div class="key-row"><input type="password" placeholder="hf_…" autocomplete="off"><button type="submit">Save</button></div>

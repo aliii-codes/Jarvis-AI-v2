@@ -156,7 +156,7 @@ def _words(text: str) -> set[str]:
     return {w for w in _norm(text).split() if len(w) > 2}
 
 
-_vectors: dict[str, "np.ndarray"] = {}  # text -> embedding, cached for the session
+_vectors: dict[str, object] = {}  # text -> embedding (numpy array), cached for the session
 
 
 def _semantic(query: str, texts: list[str], k: int) -> list[str]:

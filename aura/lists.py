@@ -3,7 +3,7 @@
 Kept in the same LangGraph SqliteStore as long-term memory, under their own namespaces.
 """
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 from . import reminders
 from .memory import _all, _db, _lock, _norm, _words

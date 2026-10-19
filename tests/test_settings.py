@@ -79,3 +79,20 @@ def test_concurrent_saves_dont_lose_changes(fake_env):
         list(pool.map(lambda c: settings.apply(*c), changes))
     saved = dotenv_values(env)
     assert (saved["Username"], saved["Theme"], saved["MaxTokens"], saved["Followups"]) == ("Ali K", "dark", "512", "false")
+
+
+def test_cerebras_key_is_checked_and_adds_the_backup_model(fake_env):
+    import openai
+    env, _ = fake_env
+    bad = mock.Mock()
+    bad.return_value.models.list.side_effect = openai.AuthenticationError(
+        "bad", response=mock.Mock(status_code=401, headers={}, request=mock.Mock()), body=None)
+    with mock.patch.object(openai, "OpenAI", bad), pytest.raises(ValueError, match="Cerebras rejected"):
+        settings.apply("cerebras_key", "csk-typo")
+    assert "cerebras:gpt-oss-120b" not in config.CHAT_MODELS
+
+    with mock.patch.object(openai, "OpenAI"):
+        assert settings.apply("cerebras_key", "csk-good-key-1234")[1] is True
+    assert config.CHAT_MODELS[:2] == ["openai/gpt-oss-120b", "cerebras:gpt-oss-120b"]  # right after the main model
+    settings.apply("cerebras_key", "")
+    assert not any(m.startswith("cerebras:") for m in config.CHAT_MODELS)

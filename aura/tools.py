@@ -486,7 +486,7 @@ def _save_note(text: str) -> str:
     """Save a quick note the user wants to keep and look up later (a wifi password, a code, an idea,
     a parking spot, a book recommendation). For facts about the user themselves, use remember instead;
     for long documents, use save_document."""
-    note = lists.add_note(text)
+    lists.add_note(text)
     return "Saved the note."
 
 
