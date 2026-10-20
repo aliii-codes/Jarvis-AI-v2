@@ -25,7 +25,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.config import get_stream_writer
 
 from . import attachments as attachment_files
-from . import config, documents, lists, memory, threads
+from . import config, documents, lists, memory, routines, threads
 from . import models as model_lib
 from .tools import TOOLS
 
@@ -43,8 +43,9 @@ Next 7 days: {week} (use these exact dates; don't compute weekdays yourself).
   ("according to networks.md, ...").
 - Questions needing several sources (comparisons, recommendations, in-depth): use research, then present its
   answer keeping the [1]-style citations and the Sources list. Quick facts: web_search.
-- "this" / "what I copied" means the clipboard. Things to do go in tasks, info to keep in notes, facts about
-  {user} in memory. Use what you know about {user} naturally, without reciting it."""
+- "this" / "what I copied" means the clipboard. Things to do go in tasks, things {user} does every week
+  (gym, school, classes) in routines, info to keep in notes, facts about {user} in memory.
+  When {user} answers a "how did it go?" check-in, log it (routines done/missed, or tasks done). Use what you know about {user} naturally, without reciting it."""
 
 MAX_TOOL_ROUNDS = 4
 DIRECT_TOOLS = {t.name for t in TOOLS if t.return_direct}  # their output is shown as the reply
@@ -90,7 +91,7 @@ def _system_prompt(request: ModelRequest) -> str:
         # Models get weekday -> date arithmetic wrong (a "Mon" gym session was saved on Wednesday): spell it out.
         week=", ".join((today + timedelta(days=i)).strftime("%a %Y-%m-%d") for i in range(7)),
     )
-    sections = [prompt, memory.prompt_block()]
+    sections = [prompt, memory.prompt_block(), routines.prompt_block(today)]
     urgent = lists.attention()
     if urgent:
         sections.append("Tasks due today or overdue (mention them if it fits naturally):\n"
@@ -112,6 +113,9 @@ TOOL_TRIGGERS = {
     "clipboard": r"\b(clipboard|copied|copy|paste|this)\b",
     "reminders": r"\b(remind|reminder|reminders|alarm|timer|tomorrow|tonight)\b|\bin \d+ ?(min|hour|h)\b|\bat \d",
     "tasks": r"\b(task|tasks|todo|to-do|to do|list|done|finished|complete|need to|have to|deadline|due)\b",
+    "routines": r"\b(routines?|schedule|every|daily|weekdays?|weekends?|each (day|week)|gym|school|class|classes|"
+                r"college|uni|practice|workout|skip|skipping|went|made it|didn'?t go|streak)\b|"
+                r"\b(mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|saturdays?|sundays?)\b",
     "notes": r"\b(note|notes|jot|write down|wifi|password|code)\b",
     "quit_aura": r"\b(bye|goodbye|quit|exit|close yourself|good night)\b",
     "documents": r"\b(notes|lecture|lectures|slides|pdf|document|documents|my files|course|syllabus|chapter|according to)\b",
@@ -134,6 +138,8 @@ def _wanted_tools(messages: list) -> set[str]:
     for m in messages[recent_start:]:
         if isinstance(m, AIMessage):
             wanted |= {call["name"] for call in m.tool_calls}
+            if m.additional_kwargs.get("aura_followup"):  # replying to "you had gym, how did it go?"
+                wanted |= {"routines", "tasks"}
     return wanted
 
 

@@ -359,6 +359,20 @@ kbd { font-family: inherit; font-size: 11px; padding: 0 4px; border: 1px solid v
 .due.today { color: var(--accent); border-color: var(--accent-glow); }
 .due.overdue { color: var(--danger); border-color: var(--danger-border); }
 
+#today-wrap[hidden] { display: none; }
+#tab-tasks .today-head { margin-top: 8px; }
+.today li.skipped .text, .today li.missed .text { color: var(--muted); }
+.today li.missed .text { text-decoration: line-through; }
+.due.now { color: var(--accent); border-color: var(--accent-glow); }
+.streak { flex-shrink: 0; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.skip { flex-shrink: 0; border: none; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer;
+        padding: 2px 6px; border-radius: 6px; opacity: 0; }
+.today li:hover .skip, .skip:focus { opacity: 1; }
+.skip:hover { background: var(--surface-2); color: var(--text); }
+.routine-meta { display: block; font-size: 12.5px; color: var(--muted); margin-top: 1px; }
+#routines-wrap .empty { display: none; }
+#routines-wrap.none .empty { display: block; }
+
 .done-wrap { margin-top: 18px; }
 .done-wrap summary { cursor: pointer; color: var(--muted); font-size: 12px; font-weight: 600; text-transform: uppercase;
                      letter-spacing: .06em; padding: 6px 0; list-style: none; outline: none; }

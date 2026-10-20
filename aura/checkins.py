@@ -10,6 +10,7 @@ from . import config, memory
 from .memory import META, _db, _lock
 
 FLAG = "aura_checkin"  # marks check-in messages in the conversation
+FOLLOWUP = "aura_followup"  # a check-in asking how routines/tasks went: the reply may need those tools
 EARLIEST_HOUR, LATEST_HOUR = 8, 22
 
 PROMPT = """You write the optional daily check-in that {assistant} may send {user}. It is now {today}.
@@ -89,7 +90,27 @@ def generate(llm=None) -> str | None:
     return message
 
 
-def deliver(aura, message: str) -> bool:
+def _name(text: str) -> str:
+    """'Gym' -> 'gym' mid-sentence, but keep 'OS assignment' and 'Sara's party' as they are."""
+    return text[0].lower() + text[1:] if len(text) > 1 and text[1].islower() and text[0] != "I" else text
+
+
+def followup_message(routines: list[dict], tasks: list[dict]) -> str | None:
+    """"You had gym at 16:30, how did it go?" for things that just finished without a word from the user."""
+    items = ([(r["text"], f"at {r['start']}") for r in routines]
+             + [(t["text"], f"due {t['due_label']}") for t in tasks])
+    if not items:
+        return None
+    if len(items) == 1:
+        text, when = items[0]
+        if routines:
+            return f"You had {_name(text)} {when}. How did it go, did you make it?"
+        return f"\"{text}\" was {when} and it's still open. What happened with it?"
+    lines = "\n".join(f"- {text} ({when})" for text, when in items)
+    return f"Quick check on these:\n{lines}\n\nHow did they go?"
+
+
+def deliver(aura, message: str, followup: bool = False) -> bool:
     """Put the check-in in today's conversation, starting a new chat if the current one isn't from today.
     Returns True if a new chat was started."""
     snapshot = aura.graph.get_state(aura.config)
@@ -98,6 +119,7 @@ def deliver(aura, message: str) -> bool:
     started_new = not last or datetime.fromisoformat(last).astimezone().date() != today
     if started_new:
         aura.new_chat()
-    aura.graph.update_state(aura.config, {"messages": [AIMessage(message, additional_kwargs={FLAG: True})]},
+    msg = AIMessage(message, additional_kwargs={FLAG: True, FOLLOWUP: followup})
+    aura.graph.update_state(aura.config, {"messages": [msg]},
                             as_node="model")
     return started_new

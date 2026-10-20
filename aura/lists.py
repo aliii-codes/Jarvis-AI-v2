@@ -3,7 +3,7 @@
 Kept in the same LangGraph SqliteStore as long-term memory, under their own namespaces.
 """
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 
 from . import reminders
 from .memory import _all, _db, _lock, _norm, _words
@@ -127,7 +127,7 @@ def edit_task(key: str, text: str | None = None, due: str | None = None) -> dict
         if task.get("reminder_id"):
             reminders.cancel(task["reminder_id"])
             task["reminder_id"] = None
-        task["due"] = parse_due(due)
+        task["due"], task["asked"] = parse_due(due), False
         if task["due"] and "T" in task["due"] and datetime.fromisoformat(task["due"]) > datetime.now():
             task["reminder_id"] = reminders.add(f"Task: {task['text']}", datetime.fromisoformat(task["due"]))
     _save_task(task)
@@ -155,6 +155,26 @@ def find_task(query: str, include_done: bool = False) -> dict | None:
     want = _task_words(query)
     scored = sorted(((len(want & _task_words(t["text"])), t) for t in candidates), key=lambda s: -s[0])
     return scored[0][1] if scored and scored[0][0] else None
+
+
+def to_ask_about(now: datetime | None = None) -> list[dict]:
+    """Open tasks whose time passed without being ticked off, not asked about yet; marks them.
+    Timed tasks: half an hour after the time. Date-only tasks: the next day, from 9:00."""
+    now = now or datetime.now()
+    ready = []
+    with _lock:
+        for t in tasks():
+            due = t.get("due")
+            if not due or t.get("asked"):
+                continue
+            when = (datetime.fromisoformat(due) + timedelta(minutes=30) if "T" in due
+                    else datetime.combine(date.fromisoformat(due) + timedelta(days=1), time(9)))
+            if now >= when:
+                t["asked"] = True
+                _save_task(t)
+                if now - when < timedelta(days=3):  # long-overdue ones: too late to ask "what happened?"
+                    ready.append(t)
+    return ready
 
 
 def attention() -> list[dict]:
@@ -208,4 +228,8 @@ def search_notes(query: str, limit: int = 8) -> list[dict]:
 
 
 def snapshot() -> dict:
-    return {"tasks": tasks(include_done=True), "notes": notes(), "attention": len(attention())}
+    from . import routines  # routines builds on this module
+    weekly = [{**r, "days_label": routines.days_label(r["days"]), "time_label": routines.time_label(r),
+               "streak": routines.streak(r)} for r in routines.routines()]
+    return {"tasks": tasks(include_done=True), "notes": notes(), "attention": len(attention()),
+            "today": routines.today(), "routines": weekly}

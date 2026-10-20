@@ -507,6 +507,38 @@ function taskItem(t) {
   return li;
 }
 
+// Today's routines: tick when done, skip ahead of time; a second click undoes either.
+function todayItem(r) {
+  const settled = ["done", "skipped", "missed"].includes(r.status);
+  const li = el("li", settled ? r.status : "");
+  const check = el("button", "check" + (r.status === "done" ? " on" : ""), ICONS.check);
+  check.type = "button"; check.title = r.status === "done" ? "Not done" : "Done";
+  check.addEventListener("click", () => bridge.setRoutineStatus(r.id, r.status === "done" ? "" : "done"));
+  const text = el("span", "text"); text.textContent = r.text;
+  const when = el("span", "due" + (r.status === "now" ? " now" : ""));
+  when.textContent = r.status === "now" ? `now · ${r.time_label}` : settled && r.status !== "done" ? r.status : r.time_label;
+  li.append(check, text);
+  if (r.streak > 1) { const s = el("span", "streak"); s.textContent = `${r.streak} in a row`; li.appendChild(s); }
+  if (r.status === "upcoming" || r.status === "now" || r.status === "skipped") {
+    const skip = el("button", "skip"); skip.type = "button";
+    skip.textContent = r.status === "skipped" ? "Undo" : "Skip";
+    skip.addEventListener("click", () => bridge.setRoutineStatus(r.id, r.status === "skipped" ? "" : "skipped"));
+    li.appendChild(skip);
+  }
+  li.appendChild(when);
+  return li;
+}
+
+function routineItem(r) {
+  const li = el("li");
+  const body = el("span", "text"); body.textContent = r.text; body.style.cursor = "default";
+  const meta = el("span", "routine-meta");
+  meta.textContent = `${r.days_label} · ${r.time_label}` + (r.streak > 1 ? ` · ${r.streak} in a row` : "");
+  body.appendChild(meta);
+  li.append(body, removeButton(() => bridge.deleteRoutine(r.id), "Delete routine"));
+  return li;
+}
+
 function noteItem(n) {
   const li = el("li");
   const body = el("div", "note-body");
@@ -546,6 +578,14 @@ function renderLists(snap) {
   done.forEach((t) => doneList.appendChild(taskItem(t)));
   $("#done-wrap").hidden = !done.length;
   $("#done-count").textContent = done.length || "";
+  const today = snap.today || [], weekly = snap.routines || [];
+  $("#today-wrap").hidden = !today.length;
+  $("#today-list").innerHTML = "";
+  today.forEach((r) => $("#today-list").appendChild(todayItem(r)));
+  $("#routine-list").innerHTML = "";
+  weekly.forEach((r) => $("#routine-list").appendChild(routineItem(r)));
+  $("#routines-count").textContent = weekly.length || "";
+  $("#routines-wrap").classList.toggle("none", !weekly.length);
   renderNotes();
 }
 

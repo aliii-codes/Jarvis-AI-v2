@@ -20,6 +20,7 @@ from langchain_core.tools import tool
 from pypdf import PdfReader
 
 from . import config, lists
+from . import routines as routine_store
 from . import documents as docs_store
 from . import memory as memory_store  # the `memory` and `reminders` names are tools below
 from . import reminders as reminder_store
@@ -608,6 +609,46 @@ def tasks(action: Literal["add", "list", "done", "delete"], task: str = "", due:
 
 
 @tool
+def routines(action: Literal["add", "list", "delete", "done", "skip", "missed"], routine: str = "",
+             days: str = "", start: str = "", end: str = "", date: str = "") -> str:
+    """Things the user does every week (gym, school, classes, practice). Not for one-off to-dos.
+    add: `routine` name, `days` ("mon-fri", "every day except fri", "mon, wed, sat"), `start` "HH:MM",
+    optional `end` "HH:MM"; adding an existing name updates it. list: all routines and today's.
+    delete: stop a routine for good. done / skip / missed: log how it went (the user went, isn't going,
+    or didn't make it), `date` "YYYY-MM-DD" defaults to today. "Skip gym today" is skip, not delete."""
+    if action == "add":
+        try:
+            r = routine_store.add(routine, days, start, end)
+        except ValueError as e:
+            return f"Not added: {e}"
+        verb = "Updated" if r["existing"] else "Added"
+        return (f"{verb} routine: {r['text']}, {routine_store.days_label(r['days'])} {routine_store.time_label(r)}. "
+                + (f"Reminder {config.ROUTINE_REMINDER} min before." if config.ROUTINE_REMINDER else ""))
+    if action == "list":
+        rows = routine_store.routines()
+        if not rows:
+            return "No routines yet."
+        week = [f"{r['text']}: {routine_store.days_label(r['days'])} {routine_store.time_label(r)}"
+                + (f" ({n} in a row)" if (n := routine_store.streak(r)) > 1 else "") for r in rows]
+        todays = [f"{r['text']} {r['time_label']}: {r['status']}" for r in routine_store.today()]
+        return "\n".join(week) + "\nToday: " + ("; ".join(todays) or "nothing")
+    match = routine_store.find(routine)
+    if not match:
+        return f"No routine matches '{routine}'."
+    if action == "delete":
+        routine_store.delete(match["id"])
+        return f"Deleted routine: {match['text']}"
+    try:
+        day = datetime.strptime(date.strip(), "%Y-%m-%d").date() if date.strip() else None
+    except ValueError:
+        return f"Date must be YYYY-MM-DD, got {date!r}."
+    status = {"done": "done", "skip": "skipped", "missed": "missed"}[action]
+    r = routine_store.set_status(match["id"], status, day)
+    n = routine_store.streak(r)
+    return f"Logged {match['text']} as {status}" + (f". Streak: {n} in a row." if status == "done" and n > 1 else ".")
+
+
+@tool
 def notes(action: Literal["save", "search", "delete"], text: str = "") -> str:
     """Quick notes the user wants to keep (wifi password, a code, an idea). save: `text`.
     search: by keywords (empty = latest). delete: keywords from the note. Facts about the user go in memory."""
@@ -651,4 +692,4 @@ def research(question: str) -> str:
 
 
 TOOLS = [web_search, research, read_url, get_weather, app, browser, set_volume, save_document, files,
-         generate_image, clipboard, reminders, memory, tasks, notes, documents, quit_aura]
+         generate_image, clipboard, reminders, memory, tasks, routines, notes, documents, quit_aura]

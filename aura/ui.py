@@ -15,7 +15,7 @@ from PyQt5.QtWebChannel import QWebChannel
 from PyQt5.QtWebEngineWidgets import QWebEnginePage, QWebEngineView
 from PyQt5.QtWidgets import QApplication, QFileDialog, QMainWindow, QShortcut
 
-from . import attachments, checkins, config, documents, embeddings, instance, learner, lists, memory, reminders, settings, threads, tools
+from . import attachments, checkins, config, documents, embeddings, instance, learner, lists, memory, reminders, routines, settings, threads, tools
 from .agent import Aura
 
 WEB_DIR = config.ROOT / "aura" / "web"
@@ -290,6 +290,17 @@ class WebBridge(QObject):
     @pyqtSlot(str)
     def deleteTask(self, key: str):
         lists.delete_task(key)
+        self._push_lists()
+
+    @pyqtSlot(str, str)
+    def setRoutineStatus(self, key: str, status: str):
+        """Today's status from the panel: "done", "skipped", or "" to clear it."""
+        routines.set_status(key, status or None)
+        self._push_lists()
+
+    @pyqtSlot(str)
+    def deleteRoutine(self, key: str):
+        routines.delete(key)
         self._push_lists()
 
     @pyqtSlot(str)
@@ -646,22 +657,42 @@ class ChatWindow(QMainWindow):
 
         self.web._run(checkins.generate, done)
 
+    def maybe_follow_up(self):
+        """Ask how things went once they're over: "You had gym at 16:30. How did it go?"
+        Never in the middle of a reply; it waits for the next tick instead."""
+        hour = datetime.now().hour
+        if (not self.aura or self.worker or not config.FOLLOWUPS
+                or not checkins.EARLIEST_HOUR <= hour < routines.LATEST_ASK_HOUR):
+            return
+        message = checkins.followup_message(routines.to_ask_about(), lists.to_ask_about())
+        if not message:
+            return
+        if checkins.deliver(self.aura, message, followup=True):  # started a new chat for today
+            self.web.history.emit(_history_json(self.aura))
+            self.push_threads()
+        else:
+            self.web.checkin.emit(message)
+
+    def _notify(self, message: str, sub: str):
+        if self.page_is_ready:
+            self.web.note.emit(message, sub)
+        else:
+            self.pending_notes.append((message, sub))
+        if shutil.which("notify-send"):
+            subprocess.Popen(["notify-send", "-a", config.ASSISTANT_NAME, "-u", "critical", "Reminder", message])
+        QApplication.alert(self)
+
     def _fire_reminders(self):
         self.maybe_checkin()
+        self.maybe_follow_up()
         self._ticks = getattr(self, "_ticks", 0) + 1
-        if self.page_is_ready and self._ticks % 4 == 0:  # once a minute: due/overdue badge stays current
+        if self.page_is_ready and self._ticks % 4 == 0:  # once a minute: due/overdue badge and Today stay current
             self.web.lists.emit(json.dumps(lists.snapshot()))
         for _id, message, due_at in reminders.due():
             late = datetime.now() - due_at > timedelta(minutes=2)
-            note = (message, f"Missed reminder, was due {due_at:%a %H:%M}" if late else f"Reminder · {due_at:%H:%M}")
-            if self.page_is_ready:
-                self.web.note.emit(*note)
-            else:
-                self.pending_notes.append(note)
-            if shutil.which("notify-send"):
-                subprocess.Popen(["notify-send", "-a", config.ASSISTANT_NAME, "-u", "critical",
-                                  "Reminder", message])
-            QApplication.alert(self)
+            self._notify(message, f"Missed reminder, was due {due_at:%a %H:%M}" if late else f"Reminder · {due_at:%H:%M}")
+        for r in routines.due_reminders():
+            self._notify(routines.reminder_text(r), f"Routine · {r['time_label']}")
 
     def closeEvent(self, event):
         """Closing the window keeps AURA running in the background (reminders, hotkey); Ctrl+Q quits."""

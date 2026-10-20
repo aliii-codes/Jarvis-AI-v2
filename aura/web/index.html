@@ -135,6 +135,11 @@
     </div>
     <div class="drawer-body">
       <section id="tab-tasks">
+        <div id="today-wrap" hidden>
+          <h3 class="today-head">Today</h3>
+          <ul id="today-list" class="mem-list tasks today"></ul>
+          <h3>To do</h3>
+        </div>
         <form id="add-task" class="add-fact">
           <input id="task-input" placeholder="Add a task…" autocomplete="off">
           <input id="task-due" type="date" class="date-input" title="Due date (optional)">
@@ -145,6 +150,11 @@
         <details id="done-wrap" class="done-wrap" hidden>
           <summary>Completed <span id="done-count" class="count"></span></summary>
           <ul id="done-list" class="mem-list tasks"></ul>
+        </details>
+        <details id="routines-wrap" class="done-wrap">
+          <summary>Routines <span id="routines-count" class="count"></span></summary>
+          <ul id="routine-list" class="mem-list"></ul>
+          <p class="empty">Tell AURA things you do every week, e.g. “I go to the gym at 4:30 every day except Friday”.</p>
         </details>
       </section>
       <section id="tab-notes" hidden>
@@ -215,8 +225,15 @@
       <h3>Companion</h3>
       <label class="switch-row"><span><b>Learn from conversations</b><small>Remembers lasting facts about you</small></span>
         <input type="checkbox" data-setting="learning"><span class="switch" aria-hidden="true"></span></label>
-      <label class="switch-row"><span><b>Gentle check-ins</b><small>At most once a day, e.g. “How did the exam go?”</small></span>
+      <label class="switch-row"><span><b>Gentle check-ins</b><small>“How did the exam go?”, and “You had gym, did you make it?” once it's over</small></span>
         <input type="checkbox" data-setting="followups"><span class="switch" aria-hidden="true"></span></label>
+
+      <div class="field"><span>Routine reminders</span>
+        <div class="segmented" data-setting="routine_reminder">
+          <button type="button" data-value="0">Off</button><button type="button" data-value="5">5 min</button><button type="button" data-value="10">10 min</button><button type="button" data-value="15">15 min</button><button type="button" data-value="30">30 min</button>
+        </div>
+      </div>
+      <p class="field-hint">How long before gym, school and other routines AURA reminds you.</p>
 
       <h3>System</h3>
       <label class="switch-row"><span><b>Start at login</b><small>Runs in the background so reminders work</small></span>

@@ -8,6 +8,7 @@ from dotenv import set_key
 from . import config, desktop, documents, hotkey, memory
 
 REPLY_LENGTHS = {"short": 512, "normal": 1024, "long": 2048}
+ROUTINE_REMINDERS = ("0", "5", "10", "15", "30")  # minutes before a routine; 0 = off
 # speech, safety-classifier and tiny-context models (allam: 4k context, no tool calling) would break AURA
 _NOT_CHAT = re.compile(r"whisper|guard|orpheus|tts|playai|distil|allam", re.I)
 _models_cache: dict[str, list[str]] = {}
@@ -44,6 +45,7 @@ def snapshot() -> dict:
         "hf_key": _mask(config.HF_API_KEY),
         "learning": memory.learning_enabled(),
         "followups": config.FOLLOWUPS,
+        "routine_reminder": str(config.ROUTINE_REMINDER),
         "autostart": desktop.AUTOSTART.exists(),
         "hotkey": hotkey.status(),
         "data_dir": str(config.DATA_DIR),
@@ -118,6 +120,11 @@ def _apply(name: str, value) -> tuple[str, bool]:
     elif name == "followups":
         _write("Followups", "true" if value else "false")
         message = "Check-ins " + ("on." if value else "off.")
+    elif name == "routine_reminder":
+        if str(value) not in ROUTINE_REMINDERS:
+            raise ValueError("Unknown reminder time.")
+        _write("RoutineReminder", str(value))
+        message = f"Routine reminders {value} min before." if str(value) != "0" else "Routine reminders off."
     elif name == "autostart":
         (desktop.install if value else desktop.uninstall)()
         message = "Starts at login." if value else "Won't start at login."

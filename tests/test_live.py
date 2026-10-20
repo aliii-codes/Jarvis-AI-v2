@@ -8,7 +8,7 @@ from unittest import mock
 
 import pytest
 
-from aura import lists, memory, reminders, tools
+from aura import lists, memory, reminders, routines, tools
 
 SCENARIO = [
     # (message, expected tool event or None for no tool, check(state) or None)
@@ -30,6 +30,12 @@ SCENARIO = [
     ("open that folder", "files:open_folder", lambda s: ("open", str(tools.HOME / "Desktop" / "poems")) in s["effects"]),
     ("translate what I copied to english", "clipboard:read", lambda s: "later" in s["reply"].lower()),
     ("what's in my Downloads folder?", "files:list", lambda s: "os_notes" in s["reply"]),
+    ("i go to gym at 4:30 throughout the week except friday", "routines:add",
+     lambda _: [(r["days"], r["start"]) for r in routines.routines()] == [([0, 1, 2, 3, 5, 6], "16:30")]),
+    ("school is 7:30 to 1:30pm, off on saturday and sunday", "routines:add",
+     lambda _: any(r["days"] == [0, 1, 2, 3, 4] and (r["start"], r["end"]) == ("07:30", "13:30")
+                   for r in routines.routines())),
+    ("skipping gym today", "routines:skip", lambda _: routines.find("gym")["log"]),
 ]
 
 

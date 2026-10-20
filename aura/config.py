@@ -19,11 +19,12 @@ FALLBACK_MODELS: list[str] = []
 CHAT_MODELS: list[str] = []
 MAX_TOKENS = 1024
 FOLLOWUPS = True
+ROUTINE_REMINDER = 15  # minutes before a routine starts; 0 = no reminder
 
 
 def reload() -> None:
     global GROQ_API_KEY, CEREBRAS_API_KEY, HF_API_KEY, IMAGE_MODEL, USERNAME, ASSISTANT_NAME, CHAT_MODEL, FALLBACK_MODELS
-    global CHAT_MODELS, SUMMARY_MODEL, MAX_TOKENS, THEME, FOLLOWUPS, VISION_MODEL
+    global CHAT_MODELS, SUMMARY_MODEL, MAX_TOKENS, THEME, FOLLOWUPS, VISION_MODEL, ROUTINE_REMINDER
     env = dotenv_values(ENV_FILE)
 
     def get(key: str, default: str | None = None) -> str | None:
@@ -39,7 +40,8 @@ def reload() -> None:
     USERNAME = get("Username", "User")
     ASSISTANT_NAME = get("Assistantname", "AURA")
     THEME = get("Theme", "system")  # system | light | dark
-    FOLLOWUPS = get("Followups", "true").lower() != "false"  # gentle check-ins
+    FOLLOWUPS = get("Followups", "true").lower() != "false"  # gentle check-ins and "how did it go?"
+    ROUTINE_REMINDER = int(get("RoutineReminder", "15"))
 
     # Main model answers and calls tools; the small one only summarizes old history.
     CHAT_MODEL = get("ChatModel", "openai/gpt-oss-120b")
