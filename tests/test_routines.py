@@ -157,6 +157,7 @@ def test_reply_to_a_follow_up_gets_the_routine_tools():
 
 def test_reminder_setting(monkeypatch):
     monkeypatch.setattr(settings, "_write", lambda k, v: None)
+    monkeypatch.setattr(config, "reload", lambda: None)  # keep the real key for later live tests
     assert settings.apply("routine_reminder", "30")[0] == "Routine reminders 30 min before."
     assert settings.apply("routine_reminder", "0")[0] == "Routine reminders off."
     with pytest.raises(ValueError):

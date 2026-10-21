@@ -15,7 +15,7 @@ from PyQt5.QtWebChannel import QWebChannel
 from PyQt5.QtWebEngineWidgets import QWebEnginePage, QWebEngineView
 from PyQt5.QtWidgets import QApplication, QFileDialog, QMainWindow, QShortcut
 
-from . import attachments, checkins, config, documents, embeddings, instance, learner, lists, memory, reminders, routines, settings, threads, tools
+from . import attachments, checkins, config, documents, embeddings, instance, hotkey, learner, lists, memory, reminders, routines, settings, threads, tools, voice
 from .agent import Aura
 
 WEB_DIR = config.ROOT / "aura" / "web"
@@ -208,6 +208,8 @@ class WebBridge(QObject):
     checkin = pyqtSignal(str)        # a gentle check-in added to the current chat
     failed = pyqtSignal(str)
     note = pyqtSignal(str, str)
+    transcript = pyqtSignal(str)     # what the user said ("" if nothing was caught)
+    voiceError = pyqtSignal(str)
 
     def __init__(self, window: "ChatWindow"):
         super().__init__()
@@ -248,6 +250,17 @@ class WebBridge(QObject):
     def openAttachment(self, attachment_id: str):
         if meta := attachments.get(attachment_id):
             tools.open_path(meta["path"])
+
+    @pyqtSlot(str, str)
+    def transcribe(self, b64: str, mime: str):
+        """A voice recording from the page: turn it into text off the UI thread; the page then sends it."""
+        def done(text, err):
+            if err:
+                self.voiceError.emit(str(err) if isinstance(err, ValueError) else f"Voice failed: {err}")
+            else:
+                self.transcript.emit(text)
+        audio = base64.b64decode(b64)
+        self._run(lambda: voice.transcribe(audio, mime), done)
 
     @pyqtSlot()
     def stop(self):
@@ -457,6 +470,16 @@ class WebBridge(QObject):
 
 
 class _Page(QWebEnginePage):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.featurePermissionRequested.connect(self._permission)
+
+    def _permission(self, origin, feature):
+        # The bundled page may use the microphone (voice input); nothing else, and no camera.
+        ok = feature == QWebEnginePage.MediaAudioCapture and origin.isLocalFile()
+        self.setFeaturePermission(origin, feature, QWebEnginePage.PermissionGrantedByUser if ok
+                                  else QWebEnginePage.PermissionDeniedByUser)
+
     def acceptNavigationRequest(self, url, nav_type, is_main_frame):
         # Only the bundled page may load in the window; any clicked link goes to the system browser.
         if url.isLocalFile():
@@ -469,6 +492,7 @@ class ChatWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.page_is_ready = False
+        self.listen_on_ready = False
         self.pending_notes: list[tuple[str, str]] = []
         self.quitting = False
         self.setWindowTitle(config.ASSISTANT_NAME)
@@ -569,6 +593,9 @@ class ChatWindow(QMainWindow):
         self.push_threads()
         self.web.lists.emit(json.dumps(lists.snapshot()))
         self.page_is_ready = True
+        if self.listen_on_ready:  # launched with --voice
+            self.listen_on_ready = False
+            self.listen()
         for note in self.pending_notes:
             self.web.note.emit(*note)
         self.pending_notes.clear()
@@ -728,10 +755,20 @@ class ChatWindow(QMainWindow):
         self.activateWindow()
         self.view.setFocus()
         QTimer.singleShot(1500, self.maybe_checkin)  # the user just opened AURA
-        self.view.page().runJavaScript("window.focusInput && focusInput()")
+        if command == "voice":
+            self.listen()
+        else:
+            self.view.page().runJavaScript("window.focusInput && focusInput()")
+
+    def listen(self):
+        """Start voice input (the talk shortcut); waits for the page if it's still loading."""
+        if self.page_is_ready:
+            self.view.page().runJavaScript("window.startListening && startListening()")
+        else:
+            self.listen_on_ready = True
 
 
-def run(hidden: bool = False):
+def run(hidden: bool = False, listen: bool = False):
     QApplication.setAttribute(Qt.AA_ShareOpenGLContexts)  # required by QtWebEngine
     app = QApplication(sys.argv)
     app.setApplicationName(config.ASSISTANT_NAME)
@@ -751,4 +788,7 @@ def run(hidden: bool = False):
     server.newConnection.connect(on_connection)
     if not hidden:
         window.show()
+    if listen:
+        window.toggle("voice")
+    QTimer.singleShot(4000, hotkey.ensure_voice)  # older installs: add the talk shortcut
     sys.exit(app.exec_())

@@ -27,6 +27,10 @@ Ask questions, get live answers from the web, and let it act on your computer.
 
 | | |
 |---|---|
+| 🎙️ **Voice** | Click the mic, press Ctrl+Space, or Super+Shift+J from anywhere, and just talk; it sends when you pause. Speech to text by Groq's Whisper (English, Urdu or auto-detect). AURA answers in text. |
+| 📧 **Email** | "Any new mails?" lists unread Gmail (they stay unread); "reply to Sara that I'll be late" drafts it in your voice and shows it. Nothing is sent until you say "send it": enforced in code, so a misheard command or an instruction hidden in an email can't send anything. Connect with a Gmail app password in Settings. |
+| 🧑‍💻 **Projects & modes** | "Open Moodline in VS Code" finds the folder by name. Set up a mode once ("dev mode: ask which project, open it in VS Code, play my dev music") and say "dev mode" to run it. |
+| 🔁 **Routines** | "Gym at 4:30 every day except Friday", "school 7:30 to 1:30 Mon–Fri": a reminder before each (15 min by default), a "you had gym, how did it go?" afterwards, streaks, and a Today list in the Tasks panel. |
 | 💬 **Chat** | Streaming answers with full Markdown, syntax-highlighted code (one-click copy), live tool-progress chips, and light/dark themes that follow your GNOME setting. |
 | 🌐 **Live web search** | Current news, prices, scores, anything recent (DuckDuckGo, no key needed). |
 | 📎 **Attachments** | Click 📎, paste a screenshot (Ctrl+V) or drop files: images are read by a vision model (qwen3.8-27b on Groq), documents (PDF, Word, text, code) are extracted, so "here's my gym schedule, add it to my tasks" just works. |
@@ -35,7 +39,7 @@ Ask questions, get live answers from the web, and let it act on your computer.
 | 📄 **Read pages & PDFs** | "Summarize this article: <url>" — fetches the page or PDF and reads it. |
 | 🌦️ **Weather** | Current conditions and today's forecast for any city (no key needed). |
 | 🖥️ **Apps & websites** | Open or close desktop apps, open websites. |
-| 🎵 **YouTube** | "play believer" finds the track and opens it. |
+| 🎵 **YouTube** | "play believer" finds the track and opens it. "Play the song I was listening to" reads your recent YouTube history from Firefox / Chrome / Chromium / Brave / Edge on this computer. |
 | 🔊 **Volume** | Mute, unmute, up, down. |
 | 📝 **Writing** | Emails, letters, essays, code: written, saved where you say ("in Downloads", "in a new folder on my Desktop"; missing folders are created, never outside your home folder, never overwriting) and opened. "Open that folder" opens it in your file manager. |
 | 📋 **Clipboard** | "Translate what I copied", "copy that email to my clipboard". |
@@ -45,7 +49,7 @@ Ask questions, get live answers from the web, and let it act on your computer.
 | ⏰ **Reminders** | "Remind me in 20 minutes to stretch", "remind me tomorrow at 9:00 to call mum". Desktop notification when due; list and cancel them too. |
 | ⚙️ **Settings** | Change your name, theme, model, reply length, API keys (checked before saving), check-ins, start-at-login and the shortcut from a panel: no file editing. |
 | 💬 **Gentle check-ins** | At most once a day, when you open AURA, a short question about something specific it knows ("How did the networks exam go?"). Most days there's nothing, so nothing appears. Off switch in Settings. |
-| ⌨️ **Global hotkey** | Super+J shows/hides AURA from anywhere (starts it if it isn't running). |
+| ⌨️ **Global hotkey** | Super+J shows/hides AURA from anywhere (starts it if it isn't running); Super+Shift+J opens it listening. |
 | 🟢 **Always on** | Starts hidden at login; closing the window keeps it running in the background (Ctrl+Q quits). |
 | ⚡ **Never stalls** | When a model hits Groq's rate limit, AURA switches to another model instantly; if all are busy it shows a countdown. Stop any reply with Esc or the stop button. |
 | 🖼️ **Images** | Generated images appear right in the chat (click to enlarge; copy, show in folder, open) and stay in your chat history. Uses Hugging Face FLUX when your account has credits, otherwise a free service (lower quality, small watermark). |
@@ -96,8 +100,8 @@ python main.py --install-hotkey "<Ctrl><Alt>j"   # pick another key
 python main.py --uninstall-hotkey
 ```
 
-Wayland doesn't let apps grab keys directly, so this adds a GNOME custom shortcut that runs
-`main.py --toggle`. On other desktops, bind that command to a key in your keyboard settings.
+Wayland doesn't let apps grab keys directly, so this adds GNOME custom shortcuts that run
+`main.py --toggle`, and `main.py --voice` on Super+Shift+J (show AURA and start listening). On other desktops, bind that command to a key in your keyboard settings.
 AURA runs as a single instance: launching it again just brings the window back.
 
 Reminders fire only while AURA is running. Hide it with the hotkey instead of closing it, and they'll still pop up.
@@ -148,7 +152,7 @@ Data/             # memory, reminders, saved documents and images (git-ignored)
 ```
 
 - **Agent**: `langchain.agents.create_agent` builds a LangGraph ReAct loop around `ChatGroq`. The model reads each tool's docstring and decides what to call.
-- **Token budget**: related actions are merged into 15 tools (e.g. `tasks(action=...)`), and a middleware sends only the tools a message needs (keyword groups plus anything used in the last couple of turns), so a typical request is ~700 input tokens instead of ~2,300.
+- **Token budget**: related actions are merged into 22 tools (e.g. `tasks(action=...)`), and a middleware sends only the tools a message needs (keyword groups plus anything used in the last couple of turns), so a typical request is ~700 input tokens instead of ~2,300.
 - **Middleware**: a dynamic system prompt (injects the current date/time), `SummarizationMiddleware` (compresses old history past ~4k tokens), `ContextEditingMiddleware` (sends old tool results as `[cleared]`), `ToolErrorMiddleware` (failed tools are reported to the model instead of crashing), and `ModelCallLimitMiddleware` (caps runaway tool loops).
 - **Conversation memory**: `SqliteSaver` checkpointer in `Data/memory.sqlite`. "New chat" starts a new thread; old ones stay saved.
 - **Meaning-based search**: a local embedding model (fastembed, `bge-small-en`, ~65 MB, downloaded once) powers memory recall ("when's my test?" finds the exam) and documents. Nothing is sent anywhere; without the model it falls back to keywords.

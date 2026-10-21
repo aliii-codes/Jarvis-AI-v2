@@ -5,7 +5,7 @@ import threading
 import groq
 from dotenv import set_key
 
-from . import config, desktop, documents, hotkey, memory
+from . import config, desktop, documents, hotkey, mail, memory, voice
 
 REPLY_LENGTHS = {"short": 512, "normal": 1024, "long": 2048}
 ROUTINE_REMINDERS = ("0", "5", "10", "15", "30")  # minutes before a routine; 0 = off
@@ -46,6 +46,9 @@ def snapshot() -> dict:
         "learning": memory.learning_enabled(),
         "followups": config.FOLLOWUPS,
         "routine_reminder": str(config.ROUTINE_REMINDER),
+        "voice_language": config.VOICE_LANGUAGE,
+        "gmail_address": config.GMAIL_ADDRESS or "",
+        "gmail_password": _mask(config.GMAIL_APP_PASSWORD),
         "autostart": desktop.AUTOSTART.exists(),
         "hotkey": hotkey.status(),
         "data_dir": str(config.DATA_DIR),
@@ -125,6 +128,25 @@ def _apply(name: str, value) -> tuple[str, bool]:
             raise ValueError("Unknown reminder time.")
         _write("RoutineReminder", str(value))
         message = f"Routine reminders {value} min before." if str(value) != "0" else "Routine reminders off."
+    elif name == "gmail_address":
+        address = str(value).strip()
+        if address and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", address):
+            raise ValueError("That doesn't look like an email address.")
+        _write("GmailAddress", address)
+        message = "Email address saved." if address else "Email address removed."
+    elif name == "gmail_password":
+        password = str(value).replace(" ", "")
+        if password:
+            if not config.GMAIL_ADDRESS:
+                raise ValueError("Enter your Gmail address first.")
+            mail.check_login(config.GMAIL_ADDRESS, password)  # MailError is a ValueError: shown as-is
+        _write("GmailAppPassword", password)
+        message = "Gmail connected." if password else "Gmail disconnected."
+    elif name == "voice_language":
+        if value not in voice.LANGUAGES:
+            raise ValueError("Unknown language.")
+        _write("VoiceLanguage", value)
+        message = "Voice language updated."
     elif name == "autostart":
         (desktop.install if value else desktop.uninstall)()
         message = "Starts at login." if value else "Won't start at login."
@@ -138,7 +160,7 @@ def _apply(name: str, value) -> tuple[str, bool]:
         message = "Re-indexing in the background…"
     elif name == "hotkey":
         (hotkey.install if value else hotkey.uninstall)()
-        message = "Super+J shortcut on." if value else "Shortcut removed."
+        message = "Super+J (and Super+Shift+J to talk) on." if value else "Shortcuts removed."
     else:
         raise ValueError(f"Unknown setting {name!r}.")
 

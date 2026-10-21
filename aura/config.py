@@ -20,11 +20,15 @@ CHAT_MODELS: list[str] = []
 MAX_TOKENS = 1024
 FOLLOWUPS = True
 ROUTINE_REMINDER = 15  # minutes before a routine starts; 0 = no reminder
+VOICE_MODEL = VOICE_LANGUAGE = ""
+GMAIL_ADDRESS: str | None = None
+GMAIL_APP_PASSWORD: str | None = None
 
 
 def reload() -> None:
     global GROQ_API_KEY, CEREBRAS_API_KEY, HF_API_KEY, IMAGE_MODEL, USERNAME, ASSISTANT_NAME, CHAT_MODEL, FALLBACK_MODELS
     global CHAT_MODELS, SUMMARY_MODEL, MAX_TOKENS, THEME, FOLLOWUPS, VISION_MODEL, ROUTINE_REMINDER
+    global VOICE_MODEL, VOICE_LANGUAGE, GMAIL_ADDRESS, GMAIL_APP_PASSWORD
     env = dotenv_values(ENV_FILE)
 
     def get(key: str, default: str | None = None) -> str | None:
@@ -56,6 +60,12 @@ def reload() -> None:
     # Groq counts input + max_tokens against the tokens-per-minute limit (8k on the free tier),
     # so a modest cap keeps requests from waiting on rate limits. Raise it on a paid tier.
     MAX_TOKENS = int(get("MaxTokens", "1024"))
+    # Speech to text (Groq Whisper; turbo is faster and has a bigger free budget than large-v3).
+    VOICE_MODEL = get("VoiceModel", "whisper-large-v3-turbo")
+    VOICE_LANGUAGE = get("VoiceLanguage", "auto")  # auto | en | ur
+    # Gmail over IMAP/SMTP; the password is a Google "app password", not the account password.
+    GMAIL_ADDRESS = get("GmailAddress")
+    GMAIL_APP_PASSWORD = get("GmailAppPassword")
 
 
 reload()

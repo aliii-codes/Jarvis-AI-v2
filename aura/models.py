@@ -41,13 +41,15 @@ def _status(err: Exception) -> int | None:
 
 
 def classify(err: Exception) -> str | None:
-    """'rate' (429), 'offline' (network, timeout, 5xx), 'bad_tool' (model called a tool that wasn't offered),
+    """'rate' (429), 'offline' (network, timeout, 5xx), 'bad_tool' (model called a tool that wasn't offered,
+    or with arguments that aren't valid JSON),
     'skip' (bad key / model not available on this provider), or None (a real error: don't swallow it)."""
     text = str(err).lower()
     code = _status(err)
     if code == 429 or "rate limit" in text:
         return "rate"
-    if "tool call validation failed" in text:
+    # A model slip: a tool that wasn't offered, or broken JSON arguments (gpt-oss now and then, e.g. long email text).
+    if "tool call validation failed" in text or "failed to parse tool call" in text:
         return "bad_tool"
     if code in (401, 403, 404):
         return "skip"

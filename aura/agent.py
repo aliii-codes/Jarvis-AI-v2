@@ -25,7 +25,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.config import get_stream_writer
 
 from . import attachments as attachment_files
-from . import config, documents, lists, memory, routines, threads
+from . import config, documents, lists, mail, memory, modes, routines, threads
 from . import models as model_lib
 from .tools import TOOLS
 
@@ -45,7 +45,9 @@ Next 7 days: {week} (use these exact dates; don't compute weekdays yourself).
   answer keeping the [1]-style citations and the Sources list. Quick facts: web_search.
 - "this" / "what I copied" means the clipboard. Things to do go in tasks, things {user} does every week
   (gym, school, classes) in routines, info to keep in notes, facts about {user} in memory.
-  When {user} answers a "how did it go?" check-in, log it (routines done/missed, or tasks done). Use what you know about {user} naturally, without reciting it."""
+  When {user} answers a "how did it go?" check-in, log it (routines done/missed, or tasks done).
+- Emails: never send without {user} approving the shown draft. "X mode" = do that mode's steps; if it needs
+  something you don't know (e.g. which project), ask once, then do all steps. Use what you know about {user} naturally, without reciting it."""
 
 MAX_TOOL_ROUNDS = 4
 DIRECT_TOOLS = {t.name for t in TOOLS if t.return_direct}  # their output is shown as the reply
@@ -91,7 +93,7 @@ def _system_prompt(request: ModelRequest) -> str:
         # Models get weekday -> date arithmetic wrong (a "Mon" gym session was saved on Wednesday): spell it out.
         week=", ".join((today + timedelta(days=i)).strftime("%a %Y-%m-%d") for i in range(7)),
     )
-    sections = [prompt, memory.prompt_block(), routines.prompt_block(today)]
+    sections = [prompt, memory.prompt_block(), routines.prompt_block(today), modes.prompt_block()]
     urgent = lists.attention()
     if urgent:
         sections.append("Tasks due today or overdue (mention them if it fits naturally):\n"
@@ -100,12 +102,20 @@ def _system_prompt(request: ModelRequest) -> str:
     return "\n\n".join(s for s in sections if s)
 
 
+EMAIL_TRIGGER = r"\b(e-?mails?|mails?|inbox|gmail|unread|repl(y|ies)|respond|draft|drafts|send|sent)\b"
+# A mode's steps can need any of these, and the user's answer to its question ("Moodline") names none of them.
+MODE_TOOLS = {"modes", "project", "browser", "app", "files", "set_volume"}
+
 # Every tool description is sent with every request, so only send the tools a message plausibly needs.
 CORE_TOOLS = {"web_search", "get_weather", "memory"}
 TOOL_TRIGGERS = {
     "read_url": r"https?://|www\.|\.(com|org|net|io|pk|pdf)\b|\b(link|article|page|url|website)\b",
+    "email": EMAIL_TRIGGER,
+    "email_draft": EMAIL_TRIGGER,
+    "project": r"\b(project|projects|vs ?code|vscode|repo|repository|codebase|coding)\b",
+    "modes": r"\bmodes?\b",
     "app": r"\b(open|close|launch|start|quit|kill|run)\b|\bapp\b",
-    "browser": r"\b(open|youtube|play|google|website|site|song|music|video|watch|browser)\b",
+    "browser": r"\b(open|youtube|yt|play|google|website|site|song|music|video|watch|watched|browser|history)\b",
     "set_volume": r"\b(volume|mute|unmute|louder|quieter|sound)\b",
     "save_document": r"\b(save|file|write|draft|document|letter|email|essay|report|downloads?|desktop|folder)\b",
     "files": r"\b(file|files|folder|dir|directory|downloads?|desktop|documents|read|find|pdf|open)\b|\.(txt|py|md|pdf)\b",
@@ -136,10 +146,14 @@ def _wanted_tools(messages: list) -> set[str]:
         wanted.add("documents")
     recent_start = humans[-3] if len(humans) >= 3 else 0
     for m in messages[recent_start:]:
+        if isinstance(m, HumanMessage) and re.search(r"\bmode\b", str(m.content), re.I):
+            wanted |= MODE_TOOLS
         if isinstance(m, AIMessage):
             wanted |= {call["name"] for call in m.tool_calls}
             if m.additional_kwargs.get("aura_followup"):  # replying to "you had gym, how did it go?"
                 wanted |= {"routines", "tasks"}
+    if wanted & {"email", "email_draft"}:  # "yes, send it" after a draft needs `email`
+        wanted |= {"email", "email_draft"}
     return wanted
 
 
@@ -309,6 +323,7 @@ class Aura:
         `attachments` (from attachments.add_file / add_bytes) are read into text before the model sees them."""
         self.cancelled.clear()
         self._repair()
+        mail.new_turn(text)  # drafts shown before this message may now be sent, if it says so
         message = HumanMessage(text)
         if attachments:
             parts = []

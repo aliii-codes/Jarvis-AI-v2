@@ -12,7 +12,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from aura import agent, documents, embeddings, memory, reminders, tools  # noqa: E402
+from aura import agent, documents, embeddings, mail, memory, projects, reminders, tools, watch_history  # noqa: E402
 from aura import config as aura_config  # noqa: E402  (pytest hooks need the name `config`)
 
 
@@ -51,6 +51,12 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(reminders, "DB", data / "reminders.sqlite")
     monkeypatch.setattr(agent, "STATE_FILE", data / "state.json")
     monkeypatch.setattr(tools, "HOME", home)
+    monkeypatch.setattr(projects, "HOME", home)
+    monkeypatch.setattr(watch_history, "HOME", home)  # never the user's real browser history
+    monkeypatch.setattr(aura_config, "GMAIL_ADDRESS", None)  # never the user's real mailbox
+    monkeypatch.setattr(aura_config, "GMAIL_APP_PASSWORD", None)
+    monkeypatch.setattr(mail, "_drafts", {})
+    monkeypatch.setattr(mail, "_turn", {"n": 0, "text": ""})
     monkeypatch.setattr(embeddings, "current", embeddings.HashEmbeddings())  # no model download in tests
     monkeypatch.setattr(memory, "_vectors", {})
     monkeypatch.setattr(documents, "_store", None)

@@ -526,6 +526,13 @@ kbd { font-family: inherit; font-size: 11px; padding: 0 4px; border: 1px solid v
   background: transparent; color: var(--muted); cursor: pointer; transition: all .15s;
 }
 .attach-btn:hover { background: var(--surface-2); color: var(--text); }
+.mic:disabled { opacity: .35; cursor: default; background: transparent; }
+/* --level (0..1) follows the voice, so it's visible that AURA hears you */
+.mic.listening { color: #fff; background: var(--danger);
+                 box-shadow: 0 0 0 calc(3px + var(--level, 0) * 9px) rgba(230, 70, 85, .28);
+                 transition: box-shadow .08s; }
+.mic.listening:hover { background: var(--danger); color: #fff; }
+.mic.transcribing { color: var(--accent); animation: pulse 1s ease-in-out infinite; }
 .tray { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 6px 0; }
 .tray[hidden] { display: none; }
 .att-chip {

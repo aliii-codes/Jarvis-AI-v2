@@ -89,3 +89,11 @@ def test_provider_with_bad_key_is_skipped(monkeypatch):
     # e.g. an expired Cerebras key: move on instead of failing the reply.
     result, _ = run({"big": ["rate_long"], "cerebras": ["bad_key"], "small": ["ok"]}, monkeypatch)
     assert result == "answer from small"
+
+
+def test_malformed_tool_json_is_retried():
+    # Seen live: gpt-oss writing a long email draft produced arguments Groq couldn't parse.
+    from aura import models
+    req = httpx.Request("POST", "https://api.groq.com/x")
+    err = groq.APIError("Failed to parse tool call arguments as JSON", request=req, body=None)
+    assert models.classify(err) == "bad_tool"

@@ -4,6 +4,8 @@
 const $ = (sel) => document.querySelector(sel);
 const thread = $("#thread"), scroller = $("#scroll"), welcome = $("#welcome");
 const input = $("#input"), sendBtn = $("#send"), newChatBtn = $("#new-chat"), statusEl = $("#status");
+const micBtn = $("#mic");
+let rec = null, voiceState = "idle";  // voice input
 
 let bridge = null;
 let busy = false;
@@ -397,7 +399,10 @@ function setBusy(value) {
   if (!value) { setStatus("ready", false); input.focus(); }
 }
 
-function updateSend() { sendBtn.disabled = !busy && !input.value.trim() && !pending.length; }
+function updateSend() {
+  sendBtn.disabled = !busy && !input.value.trim() && !pending.length;
+  updateMic();
+}
 
 function stop() {
   if (!busy || !bridge) return;
@@ -427,7 +432,8 @@ function send(text) {
 $("#composer").addEventListener("submit", (e) => { e.preventDefault(); busy ? stop() : send(input.value); });
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
-  if (!lightbox.hidden) lightbox.hidden = true;
+  if (voiceState === "listening") stopListening(true);
+  else if (!lightbox.hidden) lightbox.hidden = true;
   else if (document.querySelector(".drawer.open")) closeDrawers();
   else stop();
 });
@@ -453,6 +459,104 @@ document.addEventListener("click", (e) => {
 });
 
 window.focusInput = () => input.focus();
+
+// ── voice input ───────────────────────────────────────────────
+// Click the mic (or Ctrl+Space, or the Super+Shift+J shortcut) and talk. It stops by itself after a short
+// pause, Whisper turns it into text, and that's sent like a typed message. Click again to send now, Esc cancels.
+const SILENCE_MS = 1300, NO_SPEECH_MS = 8000, MAX_MS = 60000;
+
+function setVoiceState(state) {
+  voiceState = state;
+  micBtn.classList.toggle("listening", state === "listening");
+  micBtn.classList.toggle("transcribing", state === "transcribing");
+  micBtn.style.removeProperty("--level");
+  micBtn.title = state === "listening" ? "Send now (Esc cancels)" : state === "transcribing" ? "Transcribing…" : "Talk (Ctrl+Space)";
+  input.placeholder = state === "listening" ? "Listening… (pause to send, Esc to cancel)"
+    : state === "transcribing" ? "Transcribing…" : `Message ${$("#assistant-name").textContent}…`;
+  if (state === "listening") setStatus("listening…", true);
+  else if (state === "transcribing") setStatus("transcribing…", true);
+  else if (!busy) setStatus("ready", false);
+  updateMic();
+}
+
+function updateMic() { micBtn.disabled = voiceState === "transcribing" || (voiceState === "idle" && (busy || input.disabled)); }
+
+async function startListening() {
+  if (voiceState !== "idle" || busy || !bridge || input.disabled) return;
+  setVoiceState("listening");
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+  } catch (e) {
+    setVoiceState("idle");
+    addNote("Couldn't use the microphone.", e.name === "NotAllowedError" ? "Access to it was blocked." : "Is one connected?", "error");
+    return;
+  }
+  const type = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "";
+  const recorder = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+  const ctx = new AudioContext(), analyser = ctx.createAnalyser();
+  analyser.fftSize = 1024;
+  ctx.createMediaStreamSource(stream).connect(analyser);
+  const r = rec = { recorder, stream, ctx, chunks: [], cancelled: false, heard: false };
+  recorder.ondataavailable = (e) => { if (e.data.size) r.chunks.push(e.data); };
+  recorder.onstop = () => finishListening(r);
+  recorder.start(250);
+
+  // Speech = clearly louder than the room's background noise (measured as the quietest level so far).
+  const samples = new Float32Array(analyser.fftSize), started = performance.now();
+  let floor = 1, lastLoud = started;
+  r.timer = setInterval(() => {
+    analyser.getFloatTimeDomainData(samples);
+    const rms = Math.sqrt(samples.reduce((sum, v) => sum + v * v, 0) / samples.length);
+    floor = Math.min(floor, Math.max(rms, 0.002));
+    const now = performance.now(), loud = rms > Math.max(0.015, floor * 4);
+    if (loud) { r.heard = r.heard || now - started > 150; lastLoud = now; }
+    micBtn.style.setProperty("--level", Math.min(1, rms * 12).toFixed(2));
+    if ((r.heard && now - lastLoud > SILENCE_MS) || (!r.heard && now - started > NO_SPEECH_MS) || now - started > MAX_MS) {
+      stopListening();
+    }
+  }, 60);
+}
+
+function stopListening(cancel = false) {
+  if (!rec) return;
+  rec.cancelled = cancel;
+  clearInterval(rec.timer);
+  if (rec.recorder.state !== "inactive") rec.recorder.stop();  // finishListening runs once the last chunk is in
+  rec = null;
+}
+
+function finishListening(r) {
+  r.stream.getTracks().forEach((t) => t.stop());
+  r.ctx.close();
+  if (r.cancelled || !r.heard || !r.chunks.length) {
+    setVoiceState("idle");
+    if (!r.cancelled) addNote("Didn't hear anything.", "Check that the right microphone is selected in your system settings.");
+    return;
+  }
+  setVoiceState("transcribing");
+  const blob = new Blob(r.chunks, { type: r.recorder.mimeType || "audio/webm" });
+  const reader = new FileReader();
+  reader.onload = () => bridge.transcribe(reader.result.split(",")[1], blob.type);
+  reader.readAsDataURL(blob);
+}
+
+function onTranscript(text) {
+  setVoiceState("idle");
+  if (!text) { addNote("Didn't catch that. Try again?"); return; }
+  const typed = input.value.trim();  // anything already typed goes first ("summarize this" + spoken detail)
+  if (busy) { input.value = (typed ? typed + " " : "") + text; autosize(); updateSend(); return; }
+  send((typed ? typed + " " : "") + text);
+}
+
+window.startListening = startListening;
+micBtn.addEventListener("click", () => (voiceState === "listening" ? stopListening() : startListening()));
+document.addEventListener("keydown", (e) => {
+  if (e.code === "Space" && e.ctrlKey && !e.shiftKey && !e.altKey) {
+    e.preventDefault();
+    voiceState === "listening" ? stopListening() : startListening();
+  }
+}, true);
 
 // ── tasks & notes panel ───────────────────────────────────────
 const listsPanel = $("#lists-panel"), badge = $("#lists-badge");
@@ -635,7 +739,7 @@ function renderSettings(snap) {
     const masked = snap[f.dataset.key];
     f.querySelector("input").placeholder = masked ? `Saved (${masked}). Paste a new key to replace it` : "Paste your key";
   });
-  $("#hotkey-label").textContent = snap.hotkey ? `${LABELS[snap.hotkey] || snap.hotkey} shows or hides the window` : "Off";
+  $("#hotkey-label").textContent = snap.hotkey ? `${LABELS[snap.hotkey] || snap.hotkey} shows or hides the window, Super+Shift+J to talk` : "Off";
   renderDocuments(snap.documents, snap.data_dir);
 }
 
@@ -951,6 +1055,7 @@ new QWebChannel(qt.webChannelTransport, (channel) => {
     if (!welcome.hidden) showWelcome();  // refresh the greeting after a name change
     if (cfg.error) addNote(cfg.error, "Add your Groq API key in Settings (⚙ at the top right).", "error");
     input.disabled = !!cfg.error;  // re-enabled once a working key is saved in Settings
+    updateSend();
   });
   bridge.history.connect((json) => {
     const items = JSON.parse(json);
@@ -979,6 +1084,8 @@ new QWebChannel(qt.webChannelTransport, (channel) => {
   bridge.checkin.connect(addCheckin);
   bridge.attached.connect((json) => { pending = pending.concat(JSON.parse(json)); renderTray(); updateSend(); input.focus(); });
   bridge.attachError.connect((msg) => addNote(msg, null, "error"));
+  bridge.transcript.connect(onTranscript);
+  bridge.voiceError.connect((msg) => { setVoiceState("idle"); addNote(msg, null, "error"); });
   bridge.searchResults.connect((json) => { if (searching) renderSearch(JSON.parse(json)); });
   bridge.memorySaved.connect((json) => showToast(JSON.parse(json)));
 

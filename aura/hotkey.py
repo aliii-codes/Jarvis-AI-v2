@@ -1,7 +1,8 @@
-"""Global hotkey via a GNOME custom keyboard shortcut.
+"""Global hotkeys via GNOME custom keyboard shortcuts.
 
 Wayland doesn't let apps grab keys globally, so instead the desktop runs
 `main.py --toggle` on the key press; the running instance shows or hides itself.
+A second shortcut (Super+Shift+J) runs `main.py --voice`: AURA comes up already listening.
 """
 import ast
 import shlex
@@ -14,6 +15,9 @@ from . import config
 SCHEMA = "org.gnome.settings-daemon.plugins.media-keys"
 PATH = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/aura/"
 ENTRY = f"{SCHEMA}.custom-keybinding:{PATH}"
+VOICE_PATH = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/aura-voice/"
+VOICE_ENTRY = f"{SCHEMA}.custom-keybinding:{VOICE_PATH}"
+VOICE_BINDING = "<Super><Shift>j"
 # Entries from before the project was renamed; removed on install so the key isn't bound twice.
 LEGACY_PATHS = ["/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/jarvis/"]
 
@@ -31,8 +35,14 @@ def _gvariant_str(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def toggle_command() -> str:
-    return f"{shlex.quote(sys.executable)} {shlex.quote(str(config.ROOT / 'main.py'))} --toggle"
+def toggle_command(flag: str = "--toggle") -> str:
+    return f"{shlex.quote(sys.executable)} {shlex.quote(str(config.ROOT / 'main.py'))} {flag}"
+
+
+def _set_entry(entry: str, name: str, command: str, binding: str) -> None:
+    _gsettings("set", entry, "name", _gvariant_str(name))
+    _gsettings("set", entry, "command", _gvariant_str(command))
+    _gsettings("set", entry, "binding", _gvariant_str(binding))
 
 
 def install(binding: str = "<Super>j") -> str:
@@ -42,21 +52,30 @@ def install(binding: str = "<Super>j") -> str:
     for old in LEGACY_PATHS:
         subprocess.run(["gsettings", "reset-recursively", f"{SCHEMA}.custom-keybinding:{old}"], capture_output=True)
     bindings = [b for b in _bindings() if b not in LEGACY_PATHS]
-    if PATH not in bindings:
-        bindings.append(PATH)
+    bindings += [p for p in (PATH, VOICE_PATH) if p not in bindings]
     _gsettings("set", SCHEMA, "custom-keybindings", str(bindings))
-    _gsettings("set", ENTRY, "name", _gvariant_str(config.ASSISTANT_NAME))
-    _gsettings("set", ENTRY, "command", _gvariant_str(toggle_command()))
-    _gsettings("set", ENTRY, "binding", _gvariant_str(binding))
-    return f"Installed: {binding} now shows/hides {config.ASSISTANT_NAME} (starts it if it isn't running)."
+    _set_entry(ENTRY, config.ASSISTANT_NAME, toggle_command(), binding)
+    _set_entry(VOICE_ENTRY, f"{config.ASSISTANT_NAME} (talk)", toggle_command("--voice"), VOICE_BINDING)
+    return (f"Installed: {binding} now shows/hides {config.ASSISTANT_NAME} (starts it if it isn't running), "
+            f"and {VOICE_BINDING} opens it listening.")
+
+
+def ensure_voice() -> None:
+    """Shortcuts installed before voice existed get the talk shortcut too."""
+    try:
+        if (binding := status()) and VOICE_PATH not in _bindings():
+            install(binding)
+    except (OSError, subprocess.CalledProcessError, ValueError, SyntaxError):
+        pass  # best-effort: the main shortcut keeps working
 
 
 def uninstall() -> str:
     bindings = _bindings()
-    if PATH in bindings:
-        _gsettings("set", SCHEMA, "custom-keybindings", str([b for b in bindings if b != PATH]))
-    subprocess.run(["gsettings", "reset-recursively", ENTRY], capture_output=True)
-    return "Hotkey removed."
+    if PATH in bindings or VOICE_PATH in bindings:
+        _gsettings("set", SCHEMA, "custom-keybindings", str([b for b in bindings if b not in (PATH, VOICE_PATH)]))
+    for entry in (ENTRY, VOICE_ENTRY):
+        subprocess.run(["gsettings", "reset-recursively", entry], capture_output=True)
+    return "Hotkeys removed."
 
 
 def status() -> str | None:
